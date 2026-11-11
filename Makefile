@@ -4,7 +4,7 @@ N ?= 4
 K ?= 4
 COUNT ?= 100
 
-.PHONY: test pe skew array vectors accel seq model perf synth fmax clean
+.PHONY: test pe skew array wave vectors accel seq model perf synth fmax clean
 
 test: pe skew array accel
 
@@ -22,6 +22,9 @@ skew: sim
 array: sim
 	$(IV) -o sim/array_tb rtl/pe.v rtl/systolic_array.v tb/array_tb.v
 	vvp -n sim/array_tb
+
+wave: array
+	python3 scripts/plot_wave.py
 
 vectors:
 	python3 scripts/gen_vectors.py --n $(N) --k $(K) --count $(COUNT)
