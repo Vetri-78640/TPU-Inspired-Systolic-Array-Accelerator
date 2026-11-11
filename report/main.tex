@@ -14,15 +14,15 @@
 
 \author{
 \IEEEauthorblockN{Vetriselvan R, Hrishi Dongre, Pampana Sree Adithya, Ishan Goyal, Vedant Madne}
-\IEEEauthorblockA{Team PowerPuffBoys, Section A\\
-Modern Computer Architecture, B.Tech CS\&AI\\
+\IEEEauthorblockA{Newton School of Technology, Rishihood University, Sonipat, Haryana, India\\
+B.Tech CS\&AI, Modern Computer Architecture - Team PowerPuffBoys, Section A\\
 Phase I Report}
 }
 
 \maketitle
 
 \begin{abstract}
-Matrix multiplication dominates the computation in neural network inference. This report presents the Phase I design of a small systolic-array accelerator, in the style of the matrix unit of Google's Tensor Processing Unit, written in synthesizable Verilog-2001. The design uses an output-stationary dataflow: each of the 16 processing elements (PEs) of a 4$\times$4 grid multiplies signed 8-bit operands and keeps its own 32-bit accumulator, while operands move one PE per clock cycle. Input staggering (skew) is done in hardware with per-row and per-column delay lines, and a four-state controller sequences each run. The design is parameterized in array size $N$ and inner dimension $K$. It was verified in Icarus Verilog against a NumPy reference model on 106 matrix pairs per configuration, including directed edge cases, for $N \in \{2,3,4,8\}$. A $4\times4\times4$ product completes in 12 cycles against 65 cycles for a sequential single-MAC baseline (5.4$\times$), and the speed-up rises to 14.2$\times$ at $K=64$, approaching the 16$\times$ limit. Yosys synthesis for a Xilinx 7-series target maps the 4$\times$4 array onto 16 DSP slices.
+Matrix multiplication dominates the computation in neural network inference. This report presents the Phase I design of a small systolic-array accelerator, in the style of the matrix unit of Google's Tensor Processing Unit, written in synthesizable Verilog-2001. The design uses an output-stationary dataflow: each of the 16 processing elements (PEs) of a 4$\times$4 grid multiplies signed 8-bit operands and keeps its own 32-bit accumulator, while operands move one PE per clock cycle. Input staggering (skew) is done in hardware with per-row and per-column delay lines, and a four-state controller sequences each run. The design is parameterized in array size $N$ and inner dimension $K$. It was verified in Icarus Verilog against a NumPy reference model on 106 matrix pairs per configuration, including directed edge cases, for $N \in \{2,3,4,8\}$. A $4\times4\times4$ product completes in 12 cycles against 65 cycles for a sequential single-MAC baseline (5.4$\times$), and the speed-up rises to 14.2$\times$ at $K=64$, approaching the 16$\times$ limit. Yosys synthesis for a Xilinx 7-series target maps the 4$\times$4 array onto 16 DSP slices, and place-and-route on a Lattice iCE40 HX8K closes timing at 53.5\,MHz.
 \end{abstract}
 
 \section{Introduction}
@@ -81,7 +81,14 @@ compared with $T_{\text{seq}} = MNK$ for one MAC unit. Each skew lane is a shift
 The controller is a four-state Moore machine: IDLE waits for \texttt{start}; CLEAR pulses \texttt{clr} for one cycle; RUN increments $t$ from 0 to $2N + K - 3$; DONE holds the results and asserts \texttt{done}. A new \texttt{start} in DONE begins the next run.
 
 \subsection{Verification}
-A Python script generates test cases and expected results with NumPy and writes them as two's-complement hex files read by the Verilog testbench through \texttt{\$readmemh}. Each configuration runs 6 directed cases (identity, all zeros, all $-128$, alternating $127/-128$, a single non-zero element, non-symmetric matrices) and 100 random cases. Separate unit testbenches check the PE (including $-128 \times -128$ and the clear signal), the skew delays, and a bare 2$\times$2 array driven with hand-computed skewed inputs. A cycle-level Python model of the array confirmed the timing formula against NumPy on 200 random shapes. To check that the testbench detects faults, three bugs were injected (controller finishing one cycle early, missing skew, unsigned multiply); each produced failures.
+A Python script generates test cases and expected results with NumPy and writes them as two's-complement hex files read by the Verilog testbench through \texttt{\$readmemh}. Each configuration runs 6 directed cases (identity, all zeros, all $-128$, alternating $127/-128$, a single non-zero element, non-symmetric matrices) and 100 random cases. Separate unit testbenches check the PE (including $-128 \times -128$ and the clear signal), the skew delays, and a bare 2$\times$2 array driven with hand-computed skewed inputs. Fig.~\ref{fig:waveform} shows the simulated waveform of the first 2$\times$2 case: the skewed inputs enter on successive cycles and the four results build up to 19, 22, 43 and 50. A cycle-level Python model of the array confirmed the timing formula against NumPy on 200 random shapes. To check that the testbench detects faults, three bugs were injected (controller finishing one cycle early, missing skew, unsigned multiply); each produced failures.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{waveform.png}
+\caption{Simulation waveform of the 2$\times$2 array test ($A=[[1,2],[3,4]]$, $B=[[5,6],[7,8]]$), plotted from the Icarus Verilog VCD output.}
+\label{fig:waveform}
+\end{figure*}
 
 \subsection{Baseline}
 The baseline \texttt{seq\_mac} has the same interface and buffers but a single MAC unit stepping through $i$, $j$ and $k$, one MAC per cycle.
@@ -114,7 +121,21 @@ $N$ & $K$ & Model & Systolic & Sequential & Speed-up \\
 \label{fig:speed}
 \end{figure}
 
-Table~\ref{tab:synth} gives Yosys 0.70 synthesis results for a Xilinx 7-series target (\texttt{synth\_xilinx}). Each PE maps to one DSP48E1 slice. Yosys does not provide a reliable maximum frequency without place-and-route timing data; fmax will be obtained with Vivado in Phase II. The results bus is fully parallel ($32N^2$ output bits), which suits simulation; a board version would read results through a narrower port.
+Table~\ref{tab:synth} gives Yosys 0.70 synthesis results for a Xilinx 7-series target (\texttt{synth\_xilinx}). Each PE maps to one DSP48E1 slice. Yosys alone does not report a reliable maximum frequency, because that needs place-and-route timing data. The results bus of \texttt{mm\_accel} is fully parallel ($32N^2$ output bits), which suits simulation but exceeds the pins of any FPGA, so a wrapper \texttt{fpga\_top} reads one 32-bit result per cycle through a select input. This wrapper was synthesized with Yosys (\texttt{synth\_ice40}) and placed and routed with nextpnr-ice40 on a Lattice iCE40 HX8K (Table~\ref{tab:fmax}). The HX8K has no DSP blocks, so the multipliers are built from logic cells; this is a lower-end device than the Xilinx target. At 53.48\,MHz the 4$\times$4 array peaks at 16 MACs per cycle (0.86 GMAC/s) and completes a $4\times4\times4$ product in 12 cycles (224\,ns). Xilinx timing with Vivado is planned for Phase II.
+
+\begin{table}[t]
+\centering
+\caption{Post-route results, Lattice iCE40 HX8K (nextpnr-ice40)}
+\label{tab:fmax}
+\begin{tabular}{lrrr}
+\toprule
+Design & Logic cells & Utilization & fmax (MHz) \\
+\midrule
+\texttt{fpga\_top}, $N{=}2$ & 1559 & 20\% & 61.39 \\
+\texttt{fpga\_top}, $N{=}4$ & 6811 & 88\% & 53.48 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \begin{table}[t]
 \centering
@@ -136,13 +157,13 @@ Sequential ($N{=}K{=}4$) & 1 & 653 & 4 & 538 \\
 \begin{itemize}
 \item \textbf{Vetriselvan R} (array core): processing element and parameterized $N\times N$ systolic array RTL, PE unit testbench, repository setup.
 \item \textbf{Hrishi Dongre} (input timing and control): skew delay lines, controller FSM, top-level \texttt{mm\_accel} with buffers and feeders, skew testbench.
-\item \textbf{Ishan Goyal} (verification): NumPy test-vector generator, bare-array and full-accelerator testbenches, Makefile test flow.
-\item \textbf{Pampana Sree Adithya} (baseline and performance): sequential MAC baseline, cycle-level timing model, performance sweep and Yosys synthesis scripts.
+\item \textbf{Ishan Goyal} (verification): NumPy test-vector generator, bare-array and full-accelerator testbenches, Makefile test flow, waveform plotting.
+\item \textbf{Pampana Sree Adithya} (baseline and performance): sequential MAC baseline, cycle-level timing model, performance sweep, Yosys synthesis, FPGA wrapper and place-and-route timing.
 \item \textbf{Vedant Madne} (documentation): block, PE and wavefront diagrams, this report, repository README and demo video.
 \end{itemize}
 
 \section{Conclusion and Phase II Plan}
-Phase I delivers a complete, verified 4$\times$4 output-stationary systolic array with hardware skew and control, a sequential baseline, and first performance and resource results. Phase II will obtain timing and maximum frequency with Vivado, add tiling for matrices larger than the array, and run a quantized neural network layer through the accelerator.
+Phase I delivers a complete, verified 4$\times$4 output-stationary systolic array with hardware skew and control, a sequential baseline, and first performance, resource and timing results. Phase II will obtain Xilinx timing with Vivado, add tiling for matrices larger than the array, and run a quantized neural network layer through the accelerator.
 
 \begin{thebibliography}{9}
 \bibitem{kung1982} H.~T. Kung, ``Why systolic architectures?'' \emph{Computer}, vol.~15, no.~1, pp.~37--46, Jan. 1982.
