@@ -4,7 +4,7 @@ N ?= 4
 K ?= 4
 COUNT ?= 100
 
-.PHONY: test pe skew array vectors accel seq model perf synth clean
+.PHONY: test pe skew array vectors accel seq model perf synth fmax clean
 
 test: pe skew array accel
 
@@ -42,6 +42,9 @@ perf: sim
 
 synth:
 	bash scripts/synth.sh
+
+fmax:
+	bash scripts/fmax.sh
 
 clean:
 	rm -rf sim data

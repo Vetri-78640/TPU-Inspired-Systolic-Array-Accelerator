@@ -1,0 +1,7 @@
+Place-and-route timing, Lattice iCE40 HX8K (ct256), nextpnr-ice40
+N=2 K=2
+  logic cells ICESTORM_LC:    1559/   7680    20%
+  post-route Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 61.39 MHz (PASS at 12.00 MHz)
+N=4 K=4
+  logic cells ICESTORM_LC:    6811/   7680    88%
+  post-route Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 53.48 MHz (PASS at 12.00 MHz)
