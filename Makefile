@@ -4,9 +4,9 @@ N ?= 4
 K ?= 4
 COUNT ?= 100
 
-.PHONY: test pe skew array wave vectors accel seq model perf synth fmax clean
+.PHONY: test pe skew controller array wave vectors accel seq model perf synth fmax clean
 
-test: pe skew array accel
+test: pe skew controller array accel
 
 sim:
 	mkdir -p sim
@@ -18,6 +18,10 @@ pe: sim
 skew: sim
 	$(IV) -o sim/skew_tb rtl/skew.v tb/skew_tb.v
 	vvp -n sim/skew_tb
+
+controller: sim
+	$(IV) -o sim/controller_tb rtl/controller.v tb/controller_tb.v
+	vvp -n sim/controller_tb
 
 array: sim
 	$(IV) -o sim/array_tb rtl/pe.v rtl/systolic_array.v tb/array_tb.v
