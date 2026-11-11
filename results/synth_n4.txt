@@ -1,0 +1,28 @@
+
+8. Printing statistics.
+
+=== mm_accel ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      257 wires
+     2120 wire bits
+       29 public wires
+     1531 public wire bits
+       10 ports
+      535 port bits
+      844 cells
+       20   $scopeinfo
+        1   BUFG
+        2   CARRY4
+       16   DSP48E1
+      176   FDRE
+       21   IBUF
+        3   INV
+       42   LUT2
+        4   LUT3
+        7   LUT4
+       22   LUT5
+      514   OBUF
+       16   RAM32M
+

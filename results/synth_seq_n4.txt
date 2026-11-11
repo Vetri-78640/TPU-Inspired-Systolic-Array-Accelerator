@@ -1,0 +1,28 @@
+
+4. Printing statistics.
+
+=== seq_mac ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     1258 wires
+     4385 wire bits
+       15 public wires
+      592 public wire bits
+       10 ports
+      535 port bits
+     1758 cells
+        1   BUFG
+       14   CARRY4
+        1   DSP48E1
+      538   FDRE
+       21   IBUF
+       12   INV
+       52   LUT2
+        3   LUT3
+       10   LUT4
+       67   LUT5
+      521   LUT6
+      514   OBUF
+        4   RAM32M
+

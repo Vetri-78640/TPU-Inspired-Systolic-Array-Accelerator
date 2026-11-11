@@ -4,7 +4,7 @@ N ?= 4
 K ?= 4
 COUNT ?= 100
 
-.PHONY: test pe skew array vectors accel clean
+.PHONY: test pe skew array vectors accel seq model perf synth clean
 
 test: pe skew array accel
 
@@ -29,6 +29,19 @@ vectors:
 accel: sim vectors
 	$(IV) -P mm_accel_tb.N=$(N) -P mm_accel_tb.K=$(K) -o sim/mm_accel_tb $(RTL) tb/mm_accel_tb.v
 	vvp -n sim/mm_accel_tb
+
+seq: sim vectors
+	$(IV) -DDUT=seq_mac -P mm_accel_tb.N=$(N) -P mm_accel_tb.K=$(K) -o sim/seq_tb rtl/seq_mac.v tb/mm_accel_tb.v
+	vvp -n sim/seq_tb
+
+model:
+	python3 scripts/os_model.py
+
+perf: sim
+	python3 scripts/perf.py
+
+synth:
+	bash scripts/synth.sh
 
 clean:
 	rm -rf sim data
