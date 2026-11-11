@@ -46,6 +46,13 @@ Full table: [results/performance.csv](results/performance.csv).
 
 ![Waveform](docs/diagrams/waveform.png)
 
+## Documentation
+
+- [Architecture specification](docs/architecture.md) - modules, ports, timing, limits
+- [Design decisions](docs/design_decisions.md) - what we chose and why
+- [Roadmap](docs/roadmap.md) - Phase I status and Phase II plan
+- [Contributing](CONTRIBUTING.md) - ownership, rules and commit style
+
 ## Repository layout
 
 ```
