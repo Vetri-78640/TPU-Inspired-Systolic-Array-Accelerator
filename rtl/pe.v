@@ -2,6 +2,7 @@
 module pe (
     input clk,
     input rst,
+    input clr,
     input signed [7:0] a_in,
     input signed [7:0] b_in,
     output reg signed [7:0] a_out,
@@ -16,7 +17,10 @@ module pe (
         end else begin
             a_out <= a_in;
             b_out <= b_in;
-            acc <= acc + a_in * b_in;
+            if (clr)
+                acc <= 0;
+            else
+                acc <= acc + a_in * b_in;
         end
     end
 endmodule
