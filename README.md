@@ -1,6 +1,6 @@
 # TPU-Inspired Systolic Array Accelerator
 
-A 4x4 output-stationary systolic array that multiplies signed 8-bit matrices, written in Verilog-2001 and verified against NumPy in simulation. Built for Project 12 (Systolic Array Matrix Multiplication Accelerator) of Modern Computer Architecture, B.Tech CS&AI, Section A.
+A 4x4 output-stationary systolic array that multiplies signed 8-bit matrices, written in Verilog-2001 and verified against NumPy in simulation. Built for Project 12 (Systolic Array Matrix Multiplication Accelerator) of Modern Computer Architecture, B.Tech CS&AI, Section A, Newton School of Technology, Rishihood University.
 
 - Report (Phase I, IEEE format): [report/main.pdf](report/main.pdf)
 - Demo video: VIDEO_LINK
@@ -37,24 +37,29 @@ All 106 test cases (6 directed + 100 random) pass for N x K = 2x2, 3x3, 4x4, 4x1
 | 4 | 16 | 24 | 257 | 10.71x |
 | 4 | 64 | 72 | 1025 | 14.24x |
 
-Full table: [results/performance.csv](results/performance.csv). Synthesis (Yosys, Xilinx 7-series): the 4x4 array uses 16 DSP48E1 slices, 75 LUTs and 176 flip-flops ([results/synth_n4.txt](results/synth_n4.txt)).
+Full table: [results/performance.csv](results/performance.csv).
+
+- Synthesis (Yosys, Xilinx 7-series): the 4x4 array uses 16 DSP48E1 slices, 75 LUTs and 176 flip-flops ([results/synth_n4.txt](results/synth_n4.txt)).
+- Place-and-route (nextpnr-ice40, Lattice iCE40 HX8K, through the `rtl/fpga_top.v` read-out wrapper): the 4x4 design runs at 53.48 MHz using 6811 logic cells (88%) ([results/fmax_ice40.txt](results/fmax_ice40.txt)).
 
 ![Speed-up vs K](results/speedup_vs_k.png)
+
+![Waveform](docs/diagrams/waveform.png)
 
 ## Repository layout
 
 ```
-rtl/       pe.v, systolic_array.v, skew.v, controller.v, mm_accel.v, seq_mac.v
+rtl/       pe.v, systolic_array.v, skew.v, controller.v, mm_accel.v, seq_mac.v, fpga_top.v
 tb/        pe_tb.v, skew_tb.v, array_tb.v, mm_accel_tb.v
-scripts/   gen_vectors.py, os_model.py, perf.py, synth.sh, diagrams.py
-results/   performance.csv, speedup_vs_k.png, synth_*.txt
+scripts/   gen_vectors.py, os_model.py, perf.py, synth.sh, fmax.sh, plot_wave.py, diagrams.py
+results/   performance.csv, speedup_vs_k.png, synth_*.txt, fmax_ice40.txt
 docs/      diagrams
 report/    IEEE report (LaTeX source and PDF)
 ```
 
 ## Running it
 
-Requirements: Icarus Verilog 11+, Python 3.9+ with NumPy and Matplotlib, Yosys (only for `make synth`).
+Requirements: Icarus Verilog 11+, Python 3.9+ with NumPy and Matplotlib, Yosys (for `make synth` and `make fmax`), nextpnr-ice40 (for `make fmax`).
 
 ```bash
 make test              # PE, skew, array and 106-case accelerator tests
@@ -63,6 +68,8 @@ make seq               # sequential baseline on the same vectors
 make model             # Python cycle model vs NumPy
 make perf              # cycle sweep, writes results/
 make synth             # Yosys resource reports
+make fmax              # iCE40 place-and-route timing
+make wave              # plot the 2x2 array waveform
 ```
 
 Waveforms are written to `sim/*.vcd` (add `+wave` to `vvp` for the accelerator testbench) and can be opened in GTKWave or Surfer.
