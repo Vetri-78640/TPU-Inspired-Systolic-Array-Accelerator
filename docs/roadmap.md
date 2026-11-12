@@ -16,6 +16,8 @@
 
 | Goal | Area | Done when |
 |---|---|---|
+| Streaming back-to-back matrices | timing and control, array core | a "first" flag travels with the data so each PE restarts on its own; one 4x4x4 result every 4 cycles instead of 12, utilization near 100% |
+| Pipelined MAC | array core | register between multiply and add; fmax before and after on iCE40 (and Vivado) |
 | Xilinx timing | performance | Vivado post-route fmax and utilization for the 4x4 array on a 7-series part |
 | Tiling | timing and control | matrices larger than the array (for example 8x8 on a 4x4) multiply correctly, with cycle counts |
 | Wider limits | timing and control | buffer address and counter widths derived from N and K, so N·K > 256 works |
