@@ -12,7 +12,7 @@
 
 Modern Computer Architecture - Project 12 - Team PowerPuffBoys, Section A - Phase I
 
-[Report (PDF)](report/main.pdf) - [Demo video](VIDEO_LINK)
+[Report (PDF)](report/main.pdf) - [Demo video](https://drive.google.com/file/d/1JgA02tjA79NwcuHHsivpMeJCt5c-VWQq/view?usp=sharing)
 
 [Overview](#overview) - [Architecture](#architecture) - [Results](#results) - [Verification](#verification) - [Quick start](#quick-start) - [Structure](#repository-structure) - [Team](#team)
 
@@ -34,7 +34,7 @@ In hardware, the 4x4 array maps to 16 DSP48E1 slices on Xilinx 7-series and runs
 | Stage | Scope | Status |
 |---|---|---|
 | Phase I | PE, array, skew, controller, sequential baseline, 106-case verification, synthesis, IEEE report | Done |
-| Phase I | Demo video | In progress |
+| Phase I | Demo video | Done |
 | Phase II | Streaming back-to-back matrices, pipelined MAC, tiling, Vivado timing, int8 layer demo | Planned ([roadmap](docs/roadmap.md)) |
 
 ## Architecture
