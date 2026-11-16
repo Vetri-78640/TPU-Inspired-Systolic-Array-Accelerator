@@ -10,7 +10,7 @@
 - [x] Block, PE, wavefront and waveform diagrams
 - [x] Phase I IEEE report
 - [x] Continuous integration on every push
-- [ ] Demo video (link in README)
+- [x] Demo video (link in README)
 
 ## Phase II
 
