@@ -20,11 +20,11 @@ jobs:
           sudo apt-get install -y iverilog
           pip install numpy matplotlib
 
-      - name: Unit and accelerator tests
+      - name: Test suites
         run: |
           make test | tee test.log
           if grep -q FAIL test.log; then exit 1; fi
-          test "$(grep -c PASSED test.log)" -eq 5
+          test "$(grep -c PASSED test.log)" -eq "$(sed -n 's/^test://p' Makefile | wc -w)"
 
       - name: Sequential baseline and timing model
         run: |

@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-module pe (
+module pe #(parameter PIPE = 0) (
     input clk,
     input rst,
     input clr,
@@ -9,6 +9,24 @@ module pe (
     output reg signed [7:0] b_out,
     output reg signed [31:0] acc
 );
+    wire signed [15:0] p = a_in * b_in;
+    wire signed [15:0] m;
+
+    generate
+        if (PIPE) begin : pipe
+            reg signed [15:0] prod;
+            always @(posedge clk) begin
+                if (rst || clr)
+                    prod <= 0;
+                else
+                    prod <= p;
+            end
+            assign m = prod;
+        end else begin : comb
+            assign m = p;
+        end
+    endgenerate
+
     always @(posedge clk) begin
         if (rst) begin
             a_out <= 0;
@@ -20,7 +38,7 @@ module pe (
             if (clr)
                 acc <= 0;
             else
-                acc <= acc + a_in * b_in;
+                acc <= acc + m;
         end
     end
 endmodule

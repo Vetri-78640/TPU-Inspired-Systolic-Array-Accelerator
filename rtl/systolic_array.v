@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-module systolic_array #(parameter N = 4) (
+module systolic_array #(parameter N = 4, parameter PIPE = 0) (
     input clk,
     input rst,
     input clr,
@@ -18,7 +18,7 @@ module systolic_array #(parameter N = 4) (
         end
         for (i = 0; i < N; i = i + 1) begin : row
             for (j = 0; j < N; j = j + 1) begin : col
-                pe u_pe (
+                pe #(.PIPE(PIPE)) u_pe (
                     .clk(clk),
                     .rst(rst),
                     .clr(clr),
