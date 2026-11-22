@@ -5,15 +5,15 @@ How the team works on this repository.
 ## Setup
 
 1. Install Icarus Verilog 11+ and Python 3.9+ with NumPy and Matplotlib. Yosys and nextpnr-ice40 are only needed for `make synth` and `make fmax`.
-2. Clone the repository and run `make test`. You should see 5 lines ending in `PASSED`.
+2. Clone the repository and run `make test`. You should see 8 lines ending in `PASSED`. `make nn` also needs scikit-learn.
 
 ## Ownership
 
 | Area | Owner | Files |
 |---|---|---|
-| Array core | Vetriselvan R | `rtl/pe.v`, `rtl/systolic_array.v`, `tb/pe_tb.v` |
-| Input timing and control | Hrishi Dongre | `rtl/skew.v`, `rtl/controller.v`, `rtl/mm_accel.v`, `tb/skew_tb.v`, `tb/controller_tb.v` |
-| Verification | Ishan Goyal | `scripts/gen_vectors.py`, `scripts/plot_wave.py`, `tb/array_tb.v`, `tb/mm_accel_tb.v` |
+| Array core | Vetriselvan R | `rtl/pe.v`, `rtl/systolic_array.v`, `rtl/pe_ws.v`, `rtl/ws_array.v`, `rtl/mm_ws.v`, `tb/pe_tb.v` |
+| Input timing and control | Hrishi Dongre | `rtl/skew.v`, `rtl/controller.v`, `rtl/mm_accel.v`, `rtl/mm_stream.v`, `rtl/mm_tiled.v`, `tb/skew_tb.v`, `tb/controller_tb.v` |
+| Verification | Ishan Goyal | `scripts/gen_vectors.py`, `scripts/plot_wave.py`, `scripts/nn_demo.py`, `scripts/gatesim.sh`, `scripts/mutation.sh`, `tb/array_tb.v`, `tb/mm_accel_tb.v`, `tb/stream_tb.v`, `tb/tiled_tb.v`, `tb/net_wrap.v` |
 | Baseline and performance | Pampana Sree Adithya | `rtl/seq_mac.v`, `rtl/fpga_top.v`, `scripts/os_model.py`, `scripts/perf.py`, `scripts/synth.sh`, `scripts/fmax.sh`, `results/` |
 | Report, diagrams and video | Vedant Madne | `scripts/diagrams.py`, `docs/diagrams/`, `report/`, `README.md` |
 

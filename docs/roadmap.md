@@ -14,14 +14,15 @@
 
 ## Phase II
 
-| Goal | Area | Done when |
+| Goal | Area | Status |
 |---|---|---|
-| Streaming back-to-back matrices | timing and control, array core | a "first" flag travels with the data so each PE restarts on its own; one 4x4x4 result every 4 cycles instead of 12, utilization near 100% |
-| Pipelined MAC | array core | register between multiply and add; fmax before and after on iCE40 (and Vivado) |
-| Xilinx timing | performance | Vivado post-route fmax and utilization for the 4x4 array on a 7-series part |
-| Tiling | timing and control | matrices larger than the array (for example 8x8 on a 4x4) multiply correctly, with cycle counts |
-| Wider limits | timing and control | buffer address and counter widths derived from N and K, so N·K > 256 works |
-| Neural network demo | verification | one quantized layer (int8 weights) runs on the accelerator and matches the NumPy result |
-| Weight-stationary comparison (optional) | array core | WS variant with the same tests, cycle and resource comparison with OS |
-| Final report | documentation | Results and Discussion and Conclusion sections added |
+| Streaming back-to-back matrices | timing and control, array core | done: 106 matrices of 4x4x4 in 430 cycles (4.06 per matrix, was 12), 98.6% utilization |
+| Pipelined MAC | array core | done: iCE40 fmax 55.14 to 73.04 MHz at 4x4, one extra cycle of latency |
+| Wider limits | timing and control | done: widths from `$clog2`, tested up to N = 4, K = 256 and N = 16 |
+| Tiling | timing and control | done: `mm_tiled`, for example 8x8x8 on the 4x4 array in 41 cycles (single MAC: 513) |
+| Neural network demo | verification | done: 64-32-10 digit classifier, both layers on the accelerator, exact match with NumPy, 96.67% accuracy |
+| Gate-level check | verification | done: synthesized iCE40 netlists pass all 106 cases |
+| Xilinx timing | performance | open: Vivado does not run on macOS; iCE40 post-route timing and Yosys Xilinx resource counts are used instead |
+| Weight-stationary comparison | array core | done: `mm_ws`, same tests as tiling, digit classifier exact on both; 3% slower than OS at 360x64x32 but 90x fewer weight reads |
+| Final report | documentation | Results and Discussion and Conclusion sections |
 | Interview preparation | everyone | each member can explain their own part and the overall design |
