@@ -13,4 +13,5 @@ xc7 "$RTL" "-set N 4 -set K 4 -set PIPE 1" mm_accel synth_n4_pipe
 xc7 "rtl/seq_mac.v" "-set N 4 -set K 4" seq_mac synth_seq_n4
 xc7 "$CORE rtl/mm_stream.v" "-set N 4" mm_stream synth_stream_n4
 xc7 "$CORE rtl/mm_stream.v rtl/mm_tiled.v" "-set N 4 -set M 8 -set K 8 -set P 8" mm_tiled synth_tiled_n4_8x8
+xc7 "rtl/skew.v rtl/pe_ws.v rtl/ws_array.v rtl/mm_ws.v" "-set N 4 -set M 8 -set K 8 -set P 8" mm_ws synth_ws_n4_8x8
 echo "synthesis reports written to results/"

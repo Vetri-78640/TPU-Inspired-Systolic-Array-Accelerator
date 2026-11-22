@@ -14,6 +14,8 @@ RTL = [*CORE, "rtl/controller.v", "rtl/mm_accel.v"]
 CONFIGS = [(2, 2), (3, 3), (4, 4), (8, 8), (4, 8), (4, 16), (4, 32), (4, 64)]
 STREAM = [(2, 2), (4, 4), (4, 16), (8, 8)]
 TILED = [(4, 8, 8, 8), (4, 8, 16, 12), (4, 16, 16, 16), (8, 16, 16, 16)]
+COMPARE = [(4, 4, 4, 4), (4, 8, 8, 8), (4, 16, 16, 16), (4, 64, 16, 16), (4, 360, 64, 32), (4, 360, 32, 12)]
+WS = ["rtl/skew.v", "rtl/pe_ws.v", "rtl/ws_array.v", "rtl/mm_ws.v", "tb/tiled_tb.v"]
 
 
 def simulate(n, k, seq):
@@ -36,8 +38,8 @@ def vectors(n, k, count, m=None, p=None):
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def run(src, top, params, pattern):
-    flags = [f"-P{top}.{x}={v}" for x, v in params.items()]
+def run(src, top, params, pattern, defs=()):
+    flags = [*defs, *(f"-P{top}.{x}={v}" for x, v in params.items())]
     subprocess.run(["iverilog", "-Wall", *flags, "-o", "sim/perf2", *src], check=True)
     log = subprocess.run(["vvp", "-n", "sim/perf2"], check=True, capture_output=True, text=True).stdout
     m = re.search(pattern, log)
@@ -70,6 +72,20 @@ def phase2(seq44):
         w.writeheader()
         w.writerows(rows)
 
+    cmp = []
+    for n, m, k, p in COMPARE:
+        vectors(n, k, 2 if m > 64 else 10, m, p)
+        prm = {"N": n, "M": m, "K": k, "P": p, "MAXT": 16}
+        os_c = run([*CORE, "rtl/mm_stream.v", "rtl/mm_tiled.v", "tb/tiled_tb.v"], "tiled_tb", prm, r"errors=(\d+) cycles=(\d+)")
+        ws_c = run(WS, "tiled_tb", prm, r"errors=(\d+) cycles=(\d+)", ["-DWS"])
+        cmp.append({"N": n, "M": m, "K": k, "P": p, "os_cycles": os_c, "ws_cycles": ws_c,
+                    "a_reads_both": m * k * p // n, "os_b_reads": k * p * m // n, "ws_b_reads": k * p})
+        print(cmp[-1])
+    with open("results/os_vs_ws.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cmp[0].keys())
+        w.writeheader()
+        w.writerows(cmp)
+
     st4 = next(r for r in rows if r["design"] == "stream" and r["N"] == 4 and r["K"] == 4)
     labels = ["single MAC", "Phase I array", "streaming array"]
     vals = [seq44, st4["baseline_cycles"] / 106, st4["cycles"] / 106]
@@ -80,7 +96,7 @@ def phase2(seq44):
     plt.title("Throughput, 106 back-to-back 4x4x4 products")
     plt.tight_layout()
     plt.savefig("results/throughput.png", dpi=150)
-    print("wrote results/phase2_performance.csv and results/throughput.png")
+    print("wrote results/phase2_performance.csv, results/os_vs_ws.csv and results/throughput.png")
 
 
 def main():
