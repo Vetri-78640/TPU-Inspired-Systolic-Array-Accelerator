@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y iverilog
-          pip install numpy matplotlib
+          pip install numpy matplotlib scikit-learn
 
       - name: Test suites
         run: |
@@ -38,3 +38,8 @@ jobs:
           if grep -q FAIL seq.log; then exit 1; fi
           grep -q "ALL 106 MATRIX TESTS PASSED" seq.log
           make model
+
+      - name: Neural network demo on the accelerator
+        run: |
+          make nn | tee nn.log
+          grep -q "NN DEMO PASSED" nn.log
