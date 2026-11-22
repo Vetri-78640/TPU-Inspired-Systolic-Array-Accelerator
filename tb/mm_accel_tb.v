@@ -24,7 +24,11 @@ module mm_accel_tb;
     reg [31:0] cnt [0:0];
     integer tc, x, errors = 0, cycles = 0, first = 0;
 
-    `DUT #(.N(N), .K(K)) dut (
+    `DUT #(.N(N), .K(K)
+`ifdef PIPE
+        , .PIPE(1)
+`endif
+    ) dut (
         .clk(clk),
         .rst(rst),
         .start(start),

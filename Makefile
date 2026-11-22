@@ -1,8 +1,11 @@
 IV = iverilog -Wall
-RTL = rtl/pe.v rtl/systolic_array.v rtl/skew.v rtl/controller.v rtl/mm_accel.v
+CORE = rtl/pe.v rtl/systolic_array.v rtl/skew.v
+RTL = $(CORE) rtl/controller.v rtl/mm_accel.v
 N ?= 4
 K ?= 4
 COUNT ?= 100
+PIPE ?= 0
+PDEF = $(if $(filter 1,$(PIPE)),-DPIPE)
 
 .PHONY: test pe skew controller array wave vectors accel seq model perf synth fmax clean
 
@@ -20,11 +23,11 @@ skew: sim
 	vvp -n sim/skew_tb
 
 controller: sim
-	$(IV) -o sim/controller_tb rtl/controller.v tb/controller_tb.v
+	$(IV) -P controller_tb.PIPE=$(PIPE) -o sim/controller_tb rtl/controller.v tb/controller_tb.v
 	vvp -n sim/controller_tb
 
 array: sim
-	$(IV) -o sim/array_tb rtl/pe.v rtl/systolic_array.v tb/array_tb.v
+	$(IV) -o sim/array_tb $(CORE) tb/array_tb.v
 	vvp -n sim/array_tb
 
 wave: array
@@ -34,7 +37,7 @@ vectors:
 	python3 scripts/gen_vectors.py --n $(N) --k $(K) --count $(COUNT)
 
 accel: sim vectors
-	$(IV) -P mm_accel_tb.N=$(N) -P mm_accel_tb.K=$(K) -o sim/mm_accel_tb $(RTL) tb/mm_accel_tb.v
+	$(IV) $(PDEF) -P mm_accel_tb.N=$(N) -P mm_accel_tb.K=$(K) -o sim/mm_accel_tb $(RTL) tb/mm_accel_tb.v
 	vvp -n sim/mm_accel_tb
 
 seq: sim vectors
