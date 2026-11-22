@@ -1,16 +1,22 @@
 `timescale 1ns/1ps
-module mm_accel #(parameter N = 4, parameter K = 4) (
+module mm_accel #(
+    parameter N = 4,
+    parameter K = 4,
+    parameter AW = (N*K > 1) ? $clog2(N*K) : 1
+) (
     input clk,
     input rst,
     input start,
     input wr_en,
     input wr_b,
-    input [7:0] wr_addr,
+    input [AW-1:0] wr_addr,
     input [7:0] wr_data,
     output busy,
     output done,
     output [N*N*32-1:0] c_flat
 );
+    localparam TW = $clog2(2*N + K);
+
     reg [7:0] amem [0:N*K-1];
     reg [7:0] bmem [0:K*N-1];
 
@@ -24,9 +30,9 @@ module mm_accel #(parameter N = 4, parameter K = 4) (
     end
 
     wire clr, run;
-    wire [7:0] t;
+    wire [TW-1:0] t;
 
-    controller #(.N(N), .K(K)) u_ctrl (
+    controller #(.N(N), .K(K), .TW(TW)) u_ctrl (
         .clk(clk),
         .rst(rst),
         .start(start),

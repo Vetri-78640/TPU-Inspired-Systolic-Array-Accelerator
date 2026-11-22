@@ -3,12 +3,13 @@ module controller_tb;
     localparam N = 4;
     localparam K = 4;
     localparam RUNLEN = 2*N + K - 2;
+    localparam TW = $clog2(2*N + K);
 
     reg clk = 0;
     reg rst = 1;
     reg start = 0;
     wire clr, run, busy, done;
-    wire [7:0] t;
+    wire [TW-1:0] t;
     integer c, errors = 0;
 
     controller #(.N(N), .K(K)) dut (.clk(clk), .rst(rst), .start(start), .clr(clr), .run(run), .busy(busy), .done(done), .t(t));

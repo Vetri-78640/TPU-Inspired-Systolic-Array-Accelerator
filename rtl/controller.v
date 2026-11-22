@@ -1,5 +1,9 @@
 `timescale 1ns/1ps
-module controller #(parameter N = 4, parameter K = 4) (
+module controller #(
+    parameter N = 4,
+    parameter K = 4,
+    parameter TW = $clog2(2*N + K)
+) (
     input clk,
     input rst,
     input start,
@@ -7,7 +11,7 @@ module controller #(parameter N = 4, parameter K = 4) (
     output run,
     output busy,
     output done,
-    output reg [7:0] t
+    output reg [TW-1:0] t
 );
     localparam IDLE = 2'd0, CLEAR = 2'd1, RUN = 2'd2, DONE = 2'd3;
     localparam LAST = 2*N + K - 3;

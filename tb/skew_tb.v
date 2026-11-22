@@ -5,10 +5,13 @@ module skew_tb;
     reg rst = 1;
     reg [N*8-1:0] din = 0;
     wire [N*8-1:0] dout;
+    reg [N-1:0] fin = 0;
+    wire [N-1:0] fout;
     reg [7:0] hist [0:31];
     integer t, i, errors = 0;
 
     skew #(.N(N)) dut (.clk(clk), .rst(rst), .din(din), .dout(dout));
+    skew #(.N(N), .W(1)) dflag (.clk(clk), .rst(rst), .din(fin), .dout(fout));
 
     always #5 clk = ~clk;
 
@@ -21,10 +24,15 @@ module skew_tb;
             hist[t] = t + 1;
             for (i = 0; i < N; i = i + 1)
                 din[i*8 +: 8] = hist[t] + 16*i;
+            fin = {N{hist[t][1]}};
             #1;
             for (i = 0; i < N; i = i + 1) begin
                 if (t >= i && dout[i*8 +: 8] !== hist[t-i] + 16*i) begin
                     $display("FAIL lane %0d cycle %0d: got %0d want %0d", i, t, dout[i*8 +: 8], hist[t-i] + 16*i);
+                    errors = errors + 1;
+                end
+                if (t >= i && fout[i] !== hist[t-i][1]) begin
+                    $display("FAIL flag lane %0d cycle %0d", i, t);
                     errors = errors + 1;
                 end
             end
@@ -32,7 +40,7 @@ module skew_tb;
             #1;
         end
         if (errors == 0)
-            $display("ALL SKEW TESTS PASSED: lane i delayed by i cycles");
+            $display("ALL SKEW TESTS PASSED: lane i delayed by i cycles, 8-bit and 1-bit lanes");
         else
             $display("SKEW TESTS FAILED: %0d", errors);
         $finish;
