@@ -62,8 +62,11 @@ module mm_accel #(
         .clk(clk),
         .rst(rst),
         .clr(clr),
+        .last_left({N{1'b0}}),
         .a_left(a_skew),
         .b_top(b_skew),
-        .c_flat(c_flat)
+        .c_flat(c_flat),
+        .r_flat(),
+        .v_flat()
     );
 endmodule
