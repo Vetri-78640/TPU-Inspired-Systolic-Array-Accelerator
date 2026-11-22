@@ -6,13 +6,14 @@ module mm_accel_tb;
     parameter N = 4;
     parameter K = 4;
     parameter MAXT = 256;
+    localparam AW = (N*K > 1) ? $clog2(N*K) : 1;
 
     reg clk = 0;
     reg rst = 1;
     reg start = 0;
     reg wr_en = 0;
     reg wr_b = 0;
-    reg [7:0] wr_addr = 0;
+    reg [AW-1:0] wr_addr = 0;
     reg [7:0] wr_data = 0;
     wire busy, done;
     wire [N*N*32-1:0] c_flat;
@@ -38,7 +39,7 @@ module mm_accel_tb;
 
     always #5 clk = ~clk;
 
-    task write(input sel, input [7:0] addr, input [7:0] data);
+    task write(input sel, input [AW-1:0] addr, input [7:0] data);
         begin
             wr_en = 1;
             wr_b = sel;
@@ -50,14 +51,14 @@ module mm_accel_tb;
     endtask
 
     initial begin
-        $readmemh("data/a.hex", av);
-        $readmemh("data/b.hex", bv);
-        $readmemh("data/c.hex", cv);
         $readmemh("data/count.hex", cnt);
         if (cnt[0] === 32'bx || cnt[0] == 0 || cnt[0] > MAXT) begin
             $display("FAIL missing or invalid test vectors, run scripts/gen_vectors.py first");
             $finish;
         end
+        $readmemh("data/a.hex", av, 0, cnt[0]*N*K - 1);
+        $readmemh("data/b.hex", bv, 0, cnt[0]*K*N - 1);
+        $readmemh("data/c.hex", cv, 0, cnt[0]*N*N - 1);
         if ($test$plusargs("wave")) begin
             $dumpfile("sim/mm_accel_tb.vcd");
             $dumpvars(0, mm_accel_tb);
