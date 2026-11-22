@@ -1,4 +1,13 @@
 `timescale 1ns/1ps
+`ifdef WS
+`define DUT mm_ws
+`define NAME "ws"
+`define TILES (K/N)*(P/N)
+`else
+`define DUT mm_tiled
+`define NAME "tiled"
+`define TILES (M/N)*(P/N)
+`endif
 module tiled_tb;
     parameter N = 4;
     parameter M = 8;
@@ -25,7 +34,7 @@ module tiled_tb;
     reg [31:0] cnt [0:0];
     integer tc, x, f, errors = 0, cycles = 0, first = 0;
 
-    mm_tiled #(.N(N), .M(M), .K(K), .P(P)
+    `DUT #(.N(N), .M(M), .K(K), .P(P)
 `ifdef PIPE
         , .PIPE(1)
 `endif
@@ -108,9 +117,9 @@ module tiled_tb;
         $fclose(f);
 
         $display("RESULT %0s N=%0d M=%0d K=%0d P=%0d tiles=%0d cases=%0d errors=%0d cycles=%0d",
-                 "tiled", N, M, K, P, (M/N)*(P/N), cnt[0], errors, first);
+                 `NAME, N, M, K, P, `TILES, cnt[0], errors, first);
         if (errors == 0)
-            $display("ALL %0d %0s TESTS PASSED", cnt[0], "tiled");
+            $display("ALL %0d %0s TESTS PASSED", cnt[0], `NAME);
         $finish;
     end
 endmodule

@@ -11,7 +11,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPClassifier
 
 N = 4
-RTL = ["rtl/pe.v", "rtl/systolic_array.v", "rtl/skew.v", "rtl/mm_stream.v", "rtl/mm_tiled.v", "tb/tiled_tb.v"]
+OS = ["rtl/pe.v", "rtl/systolic_array.v", "rtl/skew.v", "rtl/mm_stream.v", "rtl/mm_tiled.v", "tb/tiled_tb.v"]
+WS = ["rtl/skew.v", "rtl/pe_ws.v", "rtl/ws_array.v", "rtl/mm_ws.v", "tb/tiled_tb.v"]
 
 
 def write(path, values, width):
@@ -19,7 +20,7 @@ def write(path, values, width):
     path.write_text("".join(f"{int(v) & mask:0{width}x}\n" for v in values))
 
 
-def accel(a, b):
+def accel(a, b, ws=False):
     m, k = a.shape
     p = b.shape[1]
     Path("data").mkdir(exist_ok=True)
@@ -28,7 +29,8 @@ def accel(a, b):
     write(Path("data/c.hex"), (a.astype(np.int64) @ b.astype(np.int64)).ravel(), 8)
     write(Path("data/count.hex"), [1], 8)
     params = [f"-Ptiled_tb.{x}={v}" for x, v in (("N", N), ("M", m), ("K", k), ("P", p), ("MAXT", 1))]
-    subprocess.run(["iverilog", "-Wall", *params, "-o", "sim/nn", *RTL], check=True)
+    src = ["-DWS", *WS] if ws else OS
+    subprocess.run(["iverilog", "-Wall", *params, "-o", "sim/nn", *src], check=True)
     log = subprocess.run(["vvp", "-n", "sim/nn"], check=True, capture_output=True, text=True).stdout
     res = re.search(r"tiles=(\d+) cases=1 errors=(\d+) cycles=(\d+)", log)
     if not res or res.group(2) != "0":
@@ -79,6 +81,9 @@ def main():
     o_hw, t2, c2 = accel(requant(h_hw), pad(w2q, w2q.shape[0], 12))
     o_hw = o_hw[:, :10]
     acc_hw = ((o_hw + b2q).argmax(1) == yte).mean()
+    h_ws, _, w1 = accel(xq, w1q, ws=True)
+    o_ws, _, w2 = accel(requant(h_ws), pad(w2q, w2q.shape[0], 12), ws=True)
+    exact_ws = bool((h_ws == h_ref).all() and (o_ws[:, :10] == o_ref).all())
 
     exact1 = bool((h_hw == h_ref).all())
     exact2 = bool((o_hw == o_ref).all())
@@ -93,10 +98,11 @@ def main():
         f"accuracy int8 on accelerator:  {acc_hw:.4f}",
         f"layer 1 ({m}x64 by 64x32): {t1} tiles, {c1} cycles on the 4x4 array, {seq1} on a single MAC, exact match: {exact1}",
         f"layer 2 ({m}x32 by 32x12): {t2} tiles, {c2} cycles on the 4x4 array, {seq2} on a single MAC, exact match: {exact2}",
+        f"weight-stationary array: layer 1 {w1} cycles, layer 2 {w2} cycles, exact match: {exact_ws}",
     ]
     Path("results/nn_demo.txt").write_text("\n".join(lines) + "\n")
     print("\n".join(lines))
-    if not (exact1 and exact2):
+    if not (exact1 and exact2 and exact_ws):
         sys.exit("FAIL accelerator output differs from NumPy")
     print("NN DEMO PASSED")
 

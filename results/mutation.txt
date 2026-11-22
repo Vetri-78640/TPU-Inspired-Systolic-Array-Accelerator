@@ -1,0 +1,17 @@
+Mutation tests: each line is one deliberate bug and whether the testbench caught it
+caught  controller finishes one cycle early (25 errors)
+caught  skew removed (288 errors)
+caught  unsigned multiply (357 errors)
+caught  PE drops the last product (369 errors)
+caught  PE keeps its sum after last (392 errors)
+caught  last flag not skewed (304 errors)
+caught  last flag not passed right (12 errors)
+caught  tiled: column wrap uses the row count (1536 errors)
+caught  tiled: B feeder uses the tile row (1409 errors)
+caught  tiled: done one tile early (182 errors)
+caught  ws: weights loaded in the wrong order (1057 errors)
+caught  ws: output deskew reversed (1087 errors)
+caught  ws: no accumulation over K tiles (1136 errors)
+caught  ws: drain one cycle short (208 errors)
+caught  ws: results captured one cycle early (1073 errors)
+caught 15 of 15

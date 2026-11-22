@@ -9,9 +9,9 @@ COUNT ?= 100
 PIPE ?= 0
 PDEF = $(if $(filter 1,$(PIPE)),-DPIPE)
 
-.PHONY: test pe skew controller array wave vectors accel seq stream tiled nn gate model perf synth fmax clean
+.PHONY: test pe skew controller array wave vectors accel seq stream tiled ws nn gate mutation model perf synth fmax clean
 
-test: pe skew controller array accel stream tiled
+test: pe skew controller array accel stream tiled ws
 
 sim:
 	mkdir -p sim
@@ -55,11 +55,19 @@ tiled: sim
 	$(IV) $(PDEF) -P tiled_tb.N=$(N) -P tiled_tb.M=$(M) -P tiled_tb.K=$(K) -P tiled_tb.P=$(P) -o sim/tiled_tb $(CORE) rtl/mm_stream.v rtl/mm_tiled.v tb/tiled_tb.v
 	vvp -n sim/tiled_tb
 
+ws: sim
+	python3 scripts/gen_vectors.py --n $(N) --m $(M) --k $(K) --p $(P) --count 20
+	$(IV) -DWS -P tiled_tb.N=$(N) -P tiled_tb.M=$(M) -P tiled_tb.K=$(K) -P tiled_tb.P=$(P) -o sim/ws_tb rtl/skew.v rtl/pe_ws.v rtl/ws_array.v rtl/mm_ws.v tb/tiled_tb.v
+	vvp -n sim/ws_tb
+
 nn: sim
 	python3 scripts/nn_demo.py
 
 gate:
 	bash scripts/gatesim.sh
+
+mutation:
+	bash scripts/mutation.sh
 
 model:
 	python3 scripts/os_model.py
