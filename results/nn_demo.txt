@@ -1,0 +1,8 @@
+Neural network demo: handwritten digits (scikit-learn digits, 8x8 images)
+network: 64 -> 32 (ReLU) -> 10, trained in float, weights and activations quantized to int8
+test images: 360
+accuracy float model:          0.9694
+accuracy int8 NumPy reference: 0.9667
+accuracy int8 on accelerator:  0.9667
+layer 1 (360x64 by 64x32): 720 tiles, 46089 cycles on the 4x4 array, 737280 on a single MAC, exact match: True
+layer 2 (360x32 by 32x12): 270 tiles, 8649 cycles on the 4x4 array, 138240 on a single MAC, exact match: True
