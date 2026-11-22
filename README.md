@@ -34,8 +34,7 @@ A single multiply-accumulate (MAC) unit multiplies an N x K matrix by a K x N ma
 | Stage | Scope | Status |
 |---|---|---|
 | Phase I | PE, array, skew, controller, sequential baseline, 106-case verification, synthesis, IEEE report, video | Done |
-| Phase II | Streaming, pipelined MAC, tiling, derived widths, weight-stationary comparison, neural network demo | Done |
-| Phase II | Final report | In progress |
+| Phase II | Streaming, pipelined MAC, tiling, derived widths, weight-stationary comparison, neural network demo, final report | Done |
 
 ## Architecture
 
