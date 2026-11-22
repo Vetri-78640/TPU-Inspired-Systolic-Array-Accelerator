@@ -7,9 +7,9 @@ COUNT ?= 100
 PIPE ?= 0
 PDEF = $(if $(filter 1,$(PIPE)),-DPIPE)
 
-.PHONY: test pe skew controller array wave vectors accel seq model perf synth fmax clean
+.PHONY: test pe skew controller array wave vectors accel seq stream model perf synth fmax clean
 
-test: pe skew controller array accel
+test: pe skew controller array accel stream
 
 sim:
 	mkdir -p sim
@@ -43,6 +43,10 @@ accel: sim vectors
 seq: sim vectors
 	$(IV) -DDUT=seq_mac -P mm_accel_tb.N=$(N) -P mm_accel_tb.K=$(K) -o sim/seq_tb rtl/seq_mac.v tb/mm_accel_tb.v
 	vvp -n sim/seq_tb
+
+stream: sim vectors
+	$(IV) $(PDEF) -P stream_tb.N=$(N) -P stream_tb.K=$(K) -o sim/stream_tb $(CORE) rtl/mm_stream.v tb/stream_tb.v
+	vvp -n sim/stream_tb
 
 model:
 	python3 scripts/os_model.py

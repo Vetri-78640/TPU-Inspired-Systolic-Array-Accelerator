@@ -11,7 +11,8 @@ module array_tb;
     reg signed [31:0] C [0:N-1][0:N-1];
     integer t, i, j, errors = 0;
 
-    systolic_array #(.N(N)) dut (.clk(clk), .rst(rst), .clr(clr), .a_left(a_left), .b_top(b_top), .c_flat(c_flat));
+    systolic_array #(.N(N)) dut (.clk(clk), .rst(rst), .clr(clr), .last_left({N{1'b0}}), .a_left(a_left), .b_top(b_top),
+        .c_flat(c_flat), .r_flat(), .v_flat());
 
     always #5 clk = ~clk;
 
