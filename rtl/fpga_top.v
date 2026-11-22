@@ -1,13 +1,18 @@
 `timescale 1ns/1ps
-module fpga_top #(parameter N = 4, parameter K = 4) (
+module fpga_top #(
+    parameter N = 4,
+    parameter K = 4,
+    parameter AW = (N*K > 1) ? $clog2(N*K) : 1,
+    parameter SW = (N*N > 1) ? $clog2(N*N) : 1
+) (
     input clk,
     input rst,
     input start,
     input wr_en,
     input wr_b,
-    input [7:0] wr_addr,
+    input [AW-1:0] wr_addr,
     input [7:0] wr_data,
-    input [7:0] sel,
+    input [SW-1:0] sel,
     output busy,
     output done,
     output reg [31:0] c_out

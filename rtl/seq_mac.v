@@ -1,11 +1,15 @@
 `timescale 1ns/1ps
-module seq_mac #(parameter N = 4, parameter K = 4) (
+module seq_mac #(
+    parameter N = 4,
+    parameter K = 4,
+    parameter AW = (N*K > 1) ? $clog2(N*K) : 1
+) (
     input clk,
     input rst,
     input start,
     input wr_en,
     input wr_b,
-    input [7:0] wr_addr,
+    input [AW-1:0] wr_addr,
     input [7:0] wr_data,
     output busy,
     output reg done,
@@ -24,7 +28,7 @@ module seq_mac #(parameter N = 4, parameter K = 4) (
     end
 
     reg run;
-    reg [7:0] i, j, k;
+    reg [15:0] i, j, k;
     reg signed [31:0] acc;
 
     wire signed [7:0] a = amem[i*K + k];
