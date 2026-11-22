@@ -26,6 +26,12 @@ jobs:
           if grep -q FAIL test.log; then exit 1; fi
           test "$(grep -c PASSED test.log)" -eq "$(sed -n 's/^test://p' Makefile | wc -w)"
 
+      - name: Test suites with the pipelined MAC
+        run: |
+          make test PIPE=1 | tee pipe.log
+          if grep -q FAIL pipe.log; then exit 1; fi
+          test "$(grep -c PASSED pipe.log)" -eq "$(sed -n 's/^test://p' Makefile | wc -w)"
+
       - name: Sequential baseline and timing model
         run: |
           make seq | tee seq.log
