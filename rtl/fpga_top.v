@@ -2,6 +2,7 @@
 module fpga_top #(
     parameter N = 4,
     parameter K = 4,
+    parameter PIPE = 0,
     parameter AW = (N*K > 1) ? $clog2(N*K) : 1,
     parameter SW = (N*N > 1) ? $clog2(N*N) : 1
 ) (
@@ -19,7 +20,7 @@ module fpga_top #(
 );
     wire [N*N*32-1:0] c_flat;
 
-    mm_accel #(.N(N), .K(K)) u_accel (
+    mm_accel #(.N(N), .K(K), .PIPE(PIPE)) u_accel (
         .clk(clk),
         .rst(rst),
         .start(start),
