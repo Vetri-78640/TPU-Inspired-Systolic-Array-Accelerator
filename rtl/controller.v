@@ -2,6 +2,7 @@
 module controller #(
     parameter N = 4,
     parameter K = 4,
+    parameter PIPE = 0,
     parameter TW = $clog2(2*N + K)
 ) (
     input clk,
@@ -14,7 +15,7 @@ module controller #(
     output reg [TW-1:0] t
 );
     localparam IDLE = 2'd0, CLEAR = 2'd1, RUN = 2'd2, DONE = 2'd3;
-    localparam LAST = 2*N + K - 3;
+    localparam LAST = 2*N + K - 3 + PIPE;
 
     reg [1:0] s;
 

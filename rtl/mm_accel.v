@@ -2,6 +2,7 @@
 module mm_accel #(
     parameter N = 4,
     parameter K = 4,
+    parameter PIPE = 0,
     parameter AW = (N*K > 1) ? $clog2(N*K) : 1
 ) (
     input clk,
@@ -32,7 +33,7 @@ module mm_accel #(
     wire clr, run;
     wire [TW-1:0] t;
 
-    controller #(.N(N), .K(K), .TW(TW)) u_ctrl (
+    controller #(.N(N), .K(K), .PIPE(PIPE), .TW(TW)) u_ctrl (
         .clk(clk),
         .rst(rst),
         .start(start),
@@ -57,7 +58,7 @@ module mm_accel #(
     skew #(.N(N)) u_skew_a (.clk(clk), .rst(rst), .din(a_col), .dout(a_skew));
     skew #(.N(N)) u_skew_b (.clk(clk), .rst(rst), .din(b_row), .dout(b_skew));
 
-    systolic_array #(.N(N)) u_array (
+    systolic_array #(.N(N), .PIPE(PIPE)) u_array (
         .clk(clk),
         .rst(rst),
         .clr(clr),

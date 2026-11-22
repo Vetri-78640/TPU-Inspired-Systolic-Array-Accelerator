@@ -2,7 +2,8 @@
 module controller_tb;
     localparam N = 4;
     localparam K = 4;
-    localparam RUNLEN = 2*N + K - 2;
+    parameter PIPE = 0;
+    localparam RUNLEN = 2*N + K - 2 + PIPE;
     localparam TW = $clog2(2*N + K);
 
     reg clk = 0;
@@ -12,7 +13,7 @@ module controller_tb;
     wire [TW-1:0] t;
     integer c, errors = 0;
 
-    controller #(.N(N), .K(K)) dut (.clk(clk), .rst(rst), .start(start), .clr(clr), .run(run), .busy(busy), .done(done), .t(t));
+    controller #(.N(N), .K(K), .PIPE(PIPE)) dut (.clk(clk), .rst(rst), .start(start), .clr(clr), .run(run), .busy(busy), .done(done), .t(t));
 
     always #5 clk = ~clk;
 
