@@ -1,0 +1,22 @@
+
+7. Printing statistics.
+
+=== mm_stream ===
+
+        +----------Local Count, excluding submodules.
+        | 
+      571 wires
+     2853 wire bits
+       35 public wires
+     1565 public wire bits
+        7 ports
+      595 port bits
+     1318 cells
+       20   $scopeinfo
+        1   BUFG
+       16   DSP48E1
+      679   FDRE
+       67   IBUF
+        7   LUT2
+      528   OBUF
+

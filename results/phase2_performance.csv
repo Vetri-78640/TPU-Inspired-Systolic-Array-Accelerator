@@ -1,0 +1,9 @@
+design,N,M,K,P,matrices,cycles,baseline,baseline_cycles,gain,utilization_pct
+stream,2,2,2,2,106,214,one at a time,636,2.97,99.1
+stream,4,4,4,4,106,430,one at a time,1272,2.96,98.6
+stream,4,4,16,4,106,1702,one at a time,2544,1.49,99.6
+stream,8,8,8,8,106,862,one at a time,2544,2.95,98.4
+tiled,4,8,8,8,1,41,single MAC,513,12.51,78.0
+tiled,4,8,16,12,1,105,single MAC,1537,14.64,91.4
+tiled,4,16,16,16,1,265,single MAC,4097,15.46,96.6
+tiled,8,16,16,16,1,81,single MAC,4097,50.58,79.0

@@ -1,0 +1,29 @@
+
+8. Printing statistics.
+
+=== mm_tiled ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     6054 wires
+    19221 wire bits
+      134 public wires
+     3243 public wire bits
+       11 ports
+       59 port bits
+     9033 cells
+       21   $scopeinfo
+        1   BUFG
+       38   CARRY4
+       16   DSP48E1
+     2839   FDRE
+       25   IBUF
+       35   INV
+      307   LUT2
+     1605   LUT3
+      446   LUT4
+     2565   LUT5
+     1077   LUT6
+       34   OBUF
+       24   RAM64M
+

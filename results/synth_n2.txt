@@ -5,24 +5,24 @@
 
         +----------Local Count, excluding submodules.
         | 
-      135 wires
-      601 wire bits
+      117 wires
+      556 wire bits
        31 public wires
-      395 public wire bits
+      384 public wire bits
        10 ports
-      151 port bits
-      329 cells
+      145 port bits
+      311 cells
         8   $scopeinfo
         1   BUFG
-        2   CARRY4
+        1   CARRY4
         4   DSP48E1
-       94   FDRE
-       21   IBUF
+       89   FDRE
+       15   IBUF
         1   INV
-        4   LUT2
-       13   LUT3
-        9   LUT4
+       12   LUT2
+        4   LUT3
+       18   LUT4
        11   LUT5
-       31   LUT6
+       17   LUT6
       130   OBUF
 

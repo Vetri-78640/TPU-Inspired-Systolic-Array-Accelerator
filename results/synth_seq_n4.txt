@@ -5,24 +5,26 @@
 
         +----------Local Count, excluding submodules.
         | 
-     1258 wires
-     4385 wire bits
+     1378 wires
+     3659 wire bits
        15 public wires
-      592 public wire bits
+      612 public wire bits
        10 ports
-      535 port bits
-     1758 cells
+      531 port bits
+     1779 cells
         1   BUFG
-       14   CARRY4
+       24   CARRY4
         1   DSP48E1
-      538   FDRE
-       21   IBUF
-       12   INV
-       52   LUT2
-        3   LUT3
-       10   LUT4
-       67   LUT5
-      521   LUT6
+      562   FDRE
+       17   IBUF
+       20   INV
+       55   LUT2
+        6   LUT3
+        8   LUT4
+      519   LUT5
+       15   LUT6
+       22   MUXF7
+       11   MUXF8
       514   OBUF
         4   RAM32M
 
