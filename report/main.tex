@@ -6,137 +6,345 @@
 \setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
 \usepackage{cite}
 \usepackage{url}
-\graphicspath{{../docs/diagrams/}{../results/}}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,patterns}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\definecolor{c1}{HTML}{1F5F99}
+\definecolor{c2}{HTML}{C8553D}
+\definecolor{c3}{HTML}{2E8B57}
+\newcommand{\code}[1]{\texttt{#1}}
 
 \begin{document}
 
-\title{A TPU-Inspired Output-Stationary Systolic Array\\for 8-bit Matrix Multiplication in Verilog}
+\title{Keeping a Small Systolic Array Busy:\\Streaming, Tiling and Dataflow Trade-offs\\in an 8-bit Matrix Multiplier}
 
 \author{
-\IEEEauthorblockN{Vetriselvan R, Hrishi Dongre, Pampana Sree Adithya, Ishan Goyal, Vedant Madne}
-\IEEEauthorblockA{Newton School of Technology, Rishihood University, Sonipat, Haryana, India\\
-B.Tech CS\&AI, Modern Computer Architecture - Team PowerPuffBoys, Section A\\
-Final Report (Phase II)}
+\IEEEauthorblockN{Vetriselvan R, Hrishi Dongre, Ishan Goyal, Pampana Sree Adithya, Vedant Madne}
+\IEEEauthorblockA{Newton School of Technology, Rishihood University\\
+Modern Computer Architecture, Project 12 (Team PowerPuffBoys, Section A), Final Report}
 }
 
 \maketitle
 
 \begin{abstract}
-Matrix multiplication dominates the computation in neural network inference. This report presents a small systolic-array accelerator in the style of the matrix unit of Google's Tensor Processing Unit, written in synthesizable Verilog-2001. Each of the 16 processing elements (PEs) of a 4$\times$4 output-stationary grid multiplies signed 8-bit operands into its own 32-bit accumulator while operands move one PE per cycle, with input skew and control in hardware. One $4\times4\times4$ product takes 12 cycles against 65 for a single multiply-accumulate (MAC) unit, but keeps only a third of the PEs busy. A one-bit \emph{last} flag that travels with the data lets each PE finish one product and start the next on its own, so 106 back-to-back products take 4.06 cycles each with 98.6\% of the PEs busy. A tiled top level multiplies matrices larger than the array, reaching 15.5$\times$ over a single MAC on a $16\times16\times16$ product, and an optional pipeline register raises the post-route clock on a Lattice iCE40 from 55.1 to 73.0\,MHz. A weight-stationary variant built for comparison reads 90$\times$ fewer weights on a 360-row layer at a 3\% cycle cost. Finally, a 64-32-10 int8 classifier for handwritten digits runs both its layers on the array, matches NumPy exactly, and classifies 96.67\% of 360 test images correctly. All designs were verified against NumPy in Icarus Verilog, and the testbenches caught all 15 deliberately planted bugs.
+A systolic array multiplies matrices by passing operands between neighbouring multiply-accumulate (MAC) units, so each value read from memory is reused across a row or column of the array. Large arrays such as the 256$\times$256 unit of Google's TPU amortize the cycles needed to fill and drain the array over long operations, but a small array cannot: a 4$\times$4 output-stationary array computing one $4\times4\times4$ product keeps its processing elements (PEs) busy for only one cycle in three. This paper describes a 4$\times$4 int8 systolic array written in Verilog-2001 and three ways of keeping it busy. A one-bit flag that travels with the data replaces the global clear, so each PE finishes one product and starts the next on its own; 106 back-to-back products then run at 4.06 cycles each with 98.6\% PE utilization. Per-PE tile counters let the array multiply matrices of any multiple of its size, reaching 15.46$\times$ over a single MAC on a $16\times16\times16$ product. A register between the multiplier and the adder raises the post-route clock on a Lattice iCE40 from 55.14 to 73.04\,MHz. We also build a weight-stationary variant and derive closed-form cycle and traffic models for both dataflows, which match every RTL measurement exactly: weight-stationary costs $3N{-}1$ extra cycles per weight tile but reads the weights $M/N$ times less often. A quantized 64-32-10 digit classifier runs both layers on the array at 99.98\% utilization and matches NumPy bit for bit. All designs pass gate-level simulation, and the testbenches detect all 15 injected faults.
 \end{abstract}
 
+\begin{IEEEkeywords}
+systolic array, matrix multiplication, dataflow, output-stationary, weight-stationary, int8 inference, FPGA, verification
+\end{IEEEkeywords}
+
 \section{Introduction}
-Fully connected and convolutional layers reduce to general matrix multiplication, so hardware that multiplies matrices efficiently speeds up most of a neural network. Computing $C = AB$ for $A \in \mathbb{Z}^{M\times K}$ and $B \in \mathbb{Z}^{K\times P}$ needs $MKP$ multiply-accumulate (MAC) operations. A processor with one MAC unit needs about $MKP$ cycles; a grid of $N \times N$ MAC units can, in principle, do $N^2$ MACs per cycle.
+Fully connected and convolutional layers reduce to general matrix multiplication (GEMM), which accounts for most of the arithmetic in neural network inference~\cite{sze2017}. Computing $C = AB$ with $A \in \mathbb{Z}^{M\times K}$ and $B \in \mathbb{Z}^{K\times P}$ takes $MKP$ MAC operations. A single MAC unit therefore needs about $MKP$ cycles, while an $N\times N$ grid of MAC units can in principle perform $N^2$ per cycle. The difficulty is supplying operands: if every unit fetched its own inputs, memory bandwidth would limit the design long before the arithmetic did. Systolic arrays~\cite{kunglei1978,kung1982} solve this by injecting each operand once at the edge of the grid and passing it from neighbour to neighbour, which is why they form the matrix unit of Google's Tensor Processing Unit (TPU)~\cite{jouppi2017}.
 
-The difficulty is feeding the grid. If every unit fetched its operands from memory, memory bandwidth would limit the design. A systolic array avoids this: each operand enters at the edge of the grid and is passed from neighbour to neighbour, so one memory read is reused by a whole row or column of PEs.
+The price of this reuse is time. Operands need $N{-}1$ cycles to cross the array, and inputs must be skewed so that matching pairs meet, so an output-stationary (OS) array spends about $2N$ cycles filling and draining around $K$ cycles of useful work. For an $N\times N$ array the PE utilization of a single product is
+\begin{equation}
+U_1 = \frac{K}{2N + K},
+\label{eq:u1}
+\end{equation}
+which is only 33\% when $K = N$. Large accelerators hide this cost with long operations and large tiles. A small array, as used in embedded inference engines and in teaching designs, cannot.
 
-This project, Project 12 of the course, builds such an array in Verilog, verifies it in simulation and compares it with a sequential baseline. Phase I delivered the working array, its verification, and first performance and synthesis results. Phase II addresses the weaknesses Phase I exposed: low utilization for short products, a fixed 8-bit size limit, and matrices no larger than the array. It adds streaming, tiling, a pipelined MAC, a weight-stationary comparison and a neural network workload.
+This paper studies that problem on a 4$\times$4 array built from scratch in Verilog-2001. In the first phase of the project we built and verified the array and measured the 33\% utilization of~\eqref{eq:u1}. In this phase we remove most of that loss and measure what each step costs in hardware. The contributions are:
+\begin{itemize}
+\item \textbf{Flag-driven streaming.} A one-bit \code{last} flag, skewed and forwarded exactly like the $A$ operands, marks the final term of each product. Each PE moves its result to an output register and restarts on its own, so products follow each other with no gap and $K$ may change from one product to the next (Section~\ref{sec:stream}).
+\item \textbf{Tiling with per-PE tile counters}, which handles the fact that PEs finish a tile at different times (Section~\ref{sec:tile}).
+\item \textbf{Closed-form cycle and traffic models} for the OS design and a weight-stationary (WS) variant, validated against RTL simulation, which show exactly when each dataflow wins (Sections~\ref{sec:ws} and~\ref{sec:osws}).
+\item \textbf{A verification flow} that checks every output against NumPy, repeats the tests on the synthesized gate-level netlist, and measures test quality by fault injection, together with an end-to-end int8 neural network run on the RTL (Sections~\ref{sec:verif} and~\ref{sec:nn}).
+\end{itemize}
+
+Section~\ref{sec:lit} reviews related work, Section~\ref{sec:design} describes the design and its analytical model, Section~\ref{sec:results} presents the measurements, and Section~\ref{sec:concl} concludes.
 
 \section{Literature Review}
-\textbf{Systolic arrays.} Kung~\cite{kung1982} introduced systolic architectures as a general method for mapping regular computations onto hardware: data flows rhythmically from memory through a network of simple cells that communicate only with neighbours, so each value fetched is used many times. Linear and two-dimensional (rectangular, triangular, hexagonal) arrays were described.
+\label{sec:lit}
 
-\textbf{The Tensor Processing Unit.} Jouppi et al.~\cite{jouppi2017} evaluated Google's first TPU, an inference chip deployed in datacenters since 2015. Its core is a weight-stationary matrix unit of 65,536 8-bit MACs giving a peak of 92 TOPS, and it was on average 15--30$\times$ faster than contemporary CPUs and GPUs on production MLP, CNN and LSTM workloads, with 30--80$\times$ better performance per watt. Matrix multiplication runs in the array, while activation functions run in a separate unit; our neural network demo uses the same split.
+\textbf{Systolic arrays.} Kung and Leiserson~\cite{kunglei1978} introduced systolic arrays as networks of simple cells that compute while data flows through them in a regular rhythm, and gave arrays for matrix-vector and matrix-matrix multiplication. Kung~\cite{kung1982} later set out the design argument: when each item fetched from memory is used many times inside the array, a compute-bound problem need not become memory-bound. Our array follows the rectangular matrix-multiplication arrangement from that work.
 
-\textbf{Dataflows.} Chen et al.~\cite{chen2016} classified accelerators by which data each PE reuses locally: weight-stationary (WS), output-stationary (OS), no local reuse, and their row-stationary scheme; Sze et al.~\cite{sze2017} survey the trade-offs between them. SCALE-Sim~\cite{samajdar2018} gives cycle-level models for OS, WS and input-stationary arrays; in OS, each output is pinned to a PE while inputs stream from the left and weights from the top, and reduction happens in place. Gemmini~\cite{genc2021} supports both OS and WS in one generator and notes that WS needs an accumulator outside the array. We build both and measure the difference.
+\textbf{Accelerators and dataflows.} The first TPU~\cite{jouppi2017} uses a 256$\times$256 array of 8-bit MACs (92\,TOPS peak at 700\,MHz) with a weight-stationary dataflow, double-buffered weights, and a separate unit for activation functions; on production inference workloads it ran 15 to 30 times faster than contemporary CPUs and GPUs. Eyeriss~\cite{chen2016,chen2017} classified dataflows by the data each PE keeps locally (weight-stationary, output-stationary, no local reuse) and proposed row-stationary, implemented with 168 PEs in 65\,nm. Sze et al.~\cite{sze2017} survey these trade-offs. MAESTRO~\cite{kwon2019} and Timeloop~\cite{parashar2019} model reuse, latency and energy analytically for a given dataflow and mapping; our cycle and traffic models in Section~\ref{sec:model} are a small instance of the same idea, specialized to a fully described RTL design so that they can be checked cycle for cycle.
 
-\textbf{Integer arithmetic.} Jacob et al.~\cite{jacob2018} showed that neural networks can run inference with 8-bit weights and activations and 32-bit accumulators, close to floating-point accuracy, which justifies the int8/int32 widths used here.
+\textbf{Simulators and generators.} SCALE-Sim~\cite{samajdar2018,samajdar2020} is a cycle-level simulator for systolic arrays with OS, WS and input-stationary dataflows; its OS mapping, with outputs pinned to PEs and inputs streamed from the left and top edges, is the one we implement. Gemmini~\cite{genc2021} generates systolic-array accelerators in Chisel with OS, WS or both dataflows and integrates them into a full system-on-chip.
 
-\section{Proposed Solution}
+\textbf{FPGA accelerators and quantization.} Zhang et al.~\cite{zhang2015} used a roofline model to size a floating-point CNN accelerator on a Virtex-7 FPGA so that computation and memory bandwidth are balanced. Jacob et al.~\cite{jacob2018} showed that inference with 8-bit weights and activations and 32-bit accumulators stays close to floating-point accuracy, which fixes the int8/int32 widths used here.
 
-\subsection{Overall architecture}
-Fig.~\ref{fig:block} shows the Phase I top level \texttt{mm\_accel}. A write port loads matrices $A$ and $B$ into on-chip buffers. When \texttt{start} is raised, the controller clears all accumulators and then steps a cycle counter $t$. While $t < K$, the feeders present column $t$ of $A$ (one value per row) and row $t$ of $B$ (one value per column). Two skew blocks delay row $i$ by $i$ cycles and column $j$ by $j$ cycles before the values enter the PE grid. When the last product is accumulated, the controller raises \texttt{done} and the 16 results are read in parallel. Phase II adds three more top levels on the same array: \texttt{mm\_stream} for back-to-back products, \texttt{mm\_tiled} for large matrices, and \texttt{mm\_ws}, a weight-stationary variant.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.85\textwidth]{block_diagram.png}
-\caption{Block diagram of the accelerator.}
-\label{fig:block}
-\end{figure*}
-
-\subsection{Processing element}
-Each PE (Fig.~\ref{fig:pe}) multiplies its two signed 8-bit inputs, adds the product to a signed 32-bit accumulator, and forwards $a$ to the right and $b$ downward through registers, so each hop costs one cycle. A synchronous \texttt{clr} input zeroes the accumulator between runs. The product of two int8 values lies in $[-16256, 16384]$, so a sum of $K$ products needs at most $16 + \lceil\log_2 K\rceil$ bits; 32 bits are safe for $K$ up to 131,071. Phase II adds two features. A parameter \texttt{PIPE} inserts a register between the multiplier and the adder, which shortens the critical path for one cycle of extra latency. A \texttt{last} input, passed to the right with $a$, marks the final $k$ of a product: on it the PE stores \texttt{res} $\leftarrow$ \texttt{acc} $+\,ab$, restarts \texttt{acc} at zero and pulses \texttt{valid}.
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.62\columnwidth]{pe.png}
-\caption{Processing element: one MAC with pass-through registers.}
-\label{fig:pe}
-\end{figure}
-
-\subsection{Output-stationary dataflow and skew}
-We chose OS because every result stays in its PE: no weight-loading phase, no partial sums moving between PEs, and no adders outside the array. With row $i$ delayed by $i$ cycles and column $j$ by $j$, PE$(i,j)$ receives $A[i][k]$ and $B[k][j]$ with the same index $k = t - i - j$ at cycle $t$, which produces the diagonal wavefront of Fig.~\ref{fig:wave}. The last PE finishes at $t = 2N + K - 3$ for an $N\times N$ output, so the compute phase takes
-\begin{equation}
-T_{\text{sys}} = 2N + K - 2 \text{ cycles,}
-\end{equation}
-compared with $T_{\text{seq}} = N^2K$ for one MAC unit. Each skew lane is a shift register of $i$ stages; the feeders drive zeros outside the valid window so idle PEs add zero.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{wavefront.png}
-\caption{Active PEs per cycle for a $4\times4\times4$ product. Each green cell performs the MAC with index $k$.}
-\label{fig:wave}
-\end{figure*}
-
-\subsection{Controller}
-The controller is a four-state Moore machine: IDLE waits for \texttt{start}; CLEAR pulses \texttt{clr} for one cycle; RUN increments $t$ from 0 to $2N + K - 3 + \texttt{PIPE}$; DONE holds the results and asserts \texttt{done}. A new \texttt{start} in DONE begins the next run. Buffer addresses and the counter are sized with \texttt{\$clog2} from $N$ and $K$, which removes the Phase I limit of $NK \le 256$.
-
-\subsection{Streaming without a global clear}
-In \texttt{mm\_accel} the global clear stops the whole array between products, so a $4\times4\times4$ product occupies the array for 12 cycles but does only 4 cycles of useful work per PE. \texttt{mm\_stream} removes the clear. The host presents one column of $A$ and one row of $B$ per cycle with no gaps between products, and raises \texttt{in\_last} with the final $k$ of each. A third skew block, one bit wide, delays the flag for row $i$ by $i$ cycles, and the PEs pass it to the right, so it reaches PE$(i,j)$ together with $A[i][K{-}1]$ and $B[K{-}1][j]$. Each PE therefore finishes its result and starts the next product in the following cycle. Results leave the array on the same diagonal wavefront, and the consumer captures each one on its \texttt{valid} pulse. Because $K$ is set by the flag rather than a parameter, it can change from one product to the next.
-
-\subsection{Tiling}
-\texttt{mm\_tiled} multiplies an $M\times K$ by $K\times P$ product, with $M$ and $P$ multiples of $N$, on the $N\times N$ array. A feeder walks the $T = (M/N)(P/N)$ output tiles row by row; for tile $(t_i, t_j)$ it streams rows $t_iN$ to $t_iN{+}N{-}1$ of $A$ and the matching columns of $B$ through \texttt{mm\_stream} for $K$ cycles, then moves to the next tile with no gap. Because PEs finish a tile at different times, one shared tile index would be wrong for some of them; instead each PE counts its own tiles and writes each result to the right address of a result buffer. \texttt{done} rises when the bottom-right PE, always the last to finish, has written its result for the final tile.
-
-\subsection{Weight-stationary variant}
-For comparison, \texttt{mm\_ws} keeps one weight in each PE, as in the TPU: PE$(k,j)$ holds $B[k][j]$. For each $N\times N$ weight tile, weights are shifted down the columns in $N$ cycles. The $M$ rows of $A$ then stream in from the left, one row per cycle with row $k$ skewed by $k$, while partial sums move down each column. Column $j$'s results leave the bottom $j$ cycles late, so a 32-bit deskew delays column $j$ by $N{-}1{-}j$ cycles to produce one output row per cycle. For $K > N$, results from successive weight tiles are added in the result buffer. \texttt{mm\_ws} has the same ports as \texttt{mm\_tiled}, so one testbench checks both.
-
-\subsection{Verification}
-A Python script generates test cases and expected results with NumPy for any shape and writes them as two's-complement hex files read by the testbenches through \texttt{\$readmemh}. Each configuration runs 6 directed cases (identity, all zeros, all $-128$, alternating $127/-128$, a single non-zero element, non-symmetric matrices) and 100 random cases. Unit testbenches check the PE (including $-128 \times -128$, the clear, the pipeline and the \texttt{last} flag), the skew for 8-bit and 1-bit lanes, the controller, and a bare 2$\times$2 array driven with hand-computed skewed inputs (Fig.~\ref{fig:waveform}). The streaming testbench checks every result of every PE as it leaves the array and that each PE produces exactly one result per product. The tiled and weight-stationary testbench also fails if any result arrives after \texttt{done}. Every suite runs with and without the pipeline register, and the synthesized iCE40 netlists are simulated at gate level against the same vectors. A cycle-level Python model confirmed the timing formula against NumPy on 200 random shapes. To check that the testbenches detect faults, 15 bugs were planted one at a time across the controller, skew, PE, streaming, tiled and weight-stationary designs; all 15 produced failures. GitHub Actions runs all of these on every push.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.9\textwidth]{waveform.png}
-\caption{Simulation waveform of the 2$\times$2 array test ($A=[[1,2],[3,4]]$, $B=[[5,6],[7,8]]$), plotted from the Icarus Verilog VCD output.}
-\label{fig:waveform}
-\end{figure*}
-
-\subsection{Baseline}
-The baseline \texttt{seq\_mac} has the same interface and buffers as \texttt{mm\_accel} but a single MAC unit stepping through $i$, $j$ and $k$, one MAC per cycle.
-
-\section{Results and Discussion}
-
-\subsection{Correctness}
-\texttt{mm\_accel} and the baseline passed all 106 cases for $N \in \{2,3,4,8,16\}$ with $K = N$, and for $N = 4$ with $K$ up to 256 ($NK = 1024$, beyond the Phase I limit). \texttt{mm\_stream} passed 106 back-to-back products at $N \in \{2,3,4,8\}$, with and without idle gaps between products. \texttt{mm\_tiled} and \texttt{mm\_ws} passed shapes from $4\times4\times4$ to $16\times16\times16$, including non-square products such as $8\times16$ by $16\times12$. All suites also passed with \texttt{PIPE}$=1$, and both synthesized iCE40 netlists passed all 106 cases at gate level.
-
-\subsection{Latency}
-Table~\ref{tab:perf} lists measured cycles from \texttt{start} to \texttt{done} for one product at a time. The array takes $T_{\text{sys}} + 2$ cycles (one to sample \texttt{start}, one to clear) and the baseline $N^2K + 1$. Fig.~\ref{fig:speed} shows that as $K$ grows, fill and drain matter less and the speed-up approaches the 16$\times$ limit set by the number of PEs. PE utilization is $K/(2N+K)$, only 33\% when $K = N$.
+Table~\ref{tab:related} places this work among these designs. The large designs amortize fill and drain over long operations; our focus is a design small enough that these effects dominate, with every effect measured in RTL rather than in a model.
 
 \begin{table}[t]
 \centering
-\caption{Latency of one product (cycles) and speed-up}
-\label{tab:perf}
-\begin{tabular}{rrrrrr}
+\caption{Related designs compared with this work}
+\label{tab:related}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lllll}
 \toprule
-$N$ & $K$ & Model & Systolic & Sequential & Speed-up \\
+Design & Dataflow & Precision & PEs & Form \\
 \midrule
-2 & 2 & 4 & 6 & 9 & 1.50 \\
-3 & 3 & 7 & 9 & 28 & 3.11 \\
-4 & 4 & 10 & 12 & 65 & 5.42 \\
-8 & 8 & 22 & 24 & 513 & 21.38 \\
-4 & 16 & 22 & 24 & 257 & 10.71 \\
-4 & 64 & 70 & 72 & 1025 & 14.24 \\
+TPU v1~\cite{jouppi2017} & WS & int8 & 65,536 & 28\,nm ASIC \\
+Eyeriss~\cite{chen2017} & RS & 16-bit fixed & 168 & 65\,nm ASIC \\
+Zhang~\cite{zhang2015} & loop tiling & fp32 & -- & Virtex-7 FPGA \\
+SCALE-Sim~\cite{samajdar2018} & OS, WS, IS & -- & any & simulator \\
+Gemmini~\cite{genc2021} & OS, WS & int8 (config.) & config. & Chisel generator \\
+This work & OS, WS & int8/int32 & 16 & Verilog RTL \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+\section{Proposed Solution}
+\label{sec:design}
+
+\subsection{Architecture overview}
+Fig.~\ref{fig:block} shows the accelerator. A write port loads $A$ and $B$ into on-chip buffers. Feeders read one column of $A$ and one row of $B$ per cycle; skew blocks delay row $i$ of $A$ by $i$ cycles and column $j$ of $B$ by $j$ cycles, and the delayed values enter an $N\times N$ grid of PEs. $A$ values move right and $B$ values move down, one PE per cycle. Four top levels share this core: \code{mm\_accel} computes one product at a time under a controller, \code{mm\_stream} accepts products back to back, \code{mm\_tiled} multiplies matrices larger than the array, and \code{mm\_ws} is the weight-stationary variant used for comparison. A single-MAC design, \code{seq\_mac}, with the same interface and buffers serves as the baseline. All modules are parameterized by $N$, and all counter and address widths are derived from the parameters with \code{\$clog2}.
+
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{speedup_vs_k.png}
-\caption{Speed-up over the sequential baseline for a 4$\times$4 array as $K$ grows.}
-\label{fig:speed}
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize, >={Stealth[length=4pt]},
+  blk/.style={draw, rounded corners=1.5pt, fill=gray!8, align=center, minimum height=7mm, inner sep=2pt},
+  pe/.style={draw, fill=c1!10, minimum size=6mm, inner sep=0pt, font=\scriptsize}]
+\foreach \i in {0,...,3}
+  \foreach \j in {0,...,3}
+    \node[pe] (p\i\j) at (\j*1.0, -\i*1.0) {PE$_{\i\j}$};
+\foreach \i in {0,...,3}
+  \foreach \j/\k in {0/1,1/2,2/3}
+    \draw[->] (p\i\j) -- (p\i\k);
+\foreach \j in {0,...,3}
+  \foreach \i/\k in {0/1,1/2,2/3}
+    \draw[->] (p\i\j) -- (p\k\j);
+\node[draw, dashed, rounded corners, fit=(p00)(p33), inner sep=3pt] (grid) {};
+\node[blk, minimum width=8mm, minimum height=38mm] (ska) at (-1.35,-1.5) {\rotatebox{90}{skew $A$ + \code{last}}};
+\foreach \i in {0,...,3} \draw[->] (ska.east |- p\i0) -- (p\i0);
+\node[blk, minimum width=38mm, minimum height=6mm] (skb) at (1.5,1.15) {skew $B$};
+\foreach \j in {0,...,3} \draw[->] (skb.south -| p0\j) -- (p0\j);
+\node[blk] (fa) at (-2.9,-1.5) {$A$\\feeder};
+\node[blk] (ba) at (-4.4,-1.5) {$A$\\buffer};
+\node[blk] (fb) at (1.5,2.25) {$B$ feeder};
+\node[blk] (bb) at (-0.6,2.25) {$B$ buffer};
+\draw[->] (ba) -- (fa); \draw[->] (fa) -- node[above, font=\scriptsize]{col $t$} (ska);
+\draw[->] (bb) -- (fb); \draw[->] (fb) -- node[right, font=\scriptsize]{row $t$} (skb);
+\node[blk] (ctl) at (-3.65,0.6) {controller\\[-1pt]{\scriptsize IDLE, CLEAR, RUN, DONE}};
+\draw[->, dashed] (ctl) -- (fa);
+\draw[->, dashed] (ctl.north) |- (bb);
+\node[font=\scriptsize] (wr) at (-4.4,-3.3) {write port};
+\draw[->] (wr) -- (ba);
+\node[blk] (out) at (5.3,-1.5) {result\\buffer /\\read-out};
+\draw[->, thick] (grid.east |- out) -- node[above, font=\scriptsize]{\code{res}, \code{valid}} (out);
+\node[font=\scriptsize, c1] at (1.5,-3.75) {$a$ moves right, $b$ moves down, one PE per cycle};
+\end{tikzpicture}}
+\caption{Accelerator organization. The controller is used by \code{mm\_accel}; \code{mm\_stream} replaces it with the \code{last} flag, and \code{mm\_tiled} adds a tile feeder and a result buffer.}
+\label{fig:block}
 \end{figure}
 
+\subsection{Processing element}
+Fig.~\ref{fig:pe} shows one PE. It multiplies two signed 8-bit operands, adds the 16-bit product to a signed 32-bit accumulator, and forwards $a$ to the right and $b$ downward through registers. An int8 product lies in $[-16256, 16384]$, so a sum of $K$ products needs at most $16 + \lceil\log_2 K\rceil$ bits, and 32 bits cannot overflow for $K \le 131{,}071$.
+
+Two features were added in this phase. A parameter \code{PIPE} inserts a register between the multiplier and the adder; the \code{last} flag is delayed by the same register so that it stays aligned with its product. A \code{last} input, forwarded to the right with $a$, marks the final term of a product. When it is set, the PE writes $\mathit{acc} + ab$ to an output register \code{res}, pulses \code{valid} for one cycle, and resets the accumulator so that the next product starts in the following cycle. The original synchronous \code{clr} input remains for \code{mm\_accel}.
+
+\begin{figure}[t]
+\centering
+\resizebox{0.95\columnwidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize, >={Stealth[length=4pt]},
+  reg/.style={draw, fill=gray!18, minimum width=8mm, minimum height=5mm, inner sep=1pt},
+  op/.style={draw, circle, inner sep=0pt, minimum size=5.5mm}]
+\node[anchor=east] (ain) at (0,0) {$a_{in}$};
+\node[anchor=east] (lin) at (0,-1.7) {$\mathit{last}_{in}$};
+\node[anchor=south] (bin) at (1.4,1.75) {$b_{in}$};
+\node[op] (mul) at (1.4,0) {$\times$};
+\node[reg, dashed] (pr) at (2.7,0) {\scriptsize prod};
+\node[op] (add) at (4.0,0) {$+$};
+\node[reg] (acc) at (5.3,0) {acc};
+\node[reg] (res) at (5.3,0.7) {res};
+\node[reg] (breg) at (2.7,1.3) {$b$};
+\node[reg] (areg) at (2.7,-0.95) {$a$};
+\node[reg, dashed] (lp) at (2.7,-1.7) {$\ell$};
+\node[reg] (val) at (5.3,-1.7) {valid};
+\node[reg] (lreg) at (2.7,-2.45) {\scriptsize last};
+\draw[->] (ain) -- (mul);
+\draw[->] (bin) -- (mul);
+\draw[->] (mul) -- node[above, font=\scriptsize]{16} (pr);
+\draw[->] (pr) -- (add);
+\draw[->] (add) -- node[below, font=\scriptsize]{32} (acc);
+\draw[->] (acc.south) -- ++(0,-0.3) -| (add.south);
+\draw[->] (add.north) |- (res.west);
+\fill (1.4,1.3) circle (1pt); \draw[->] (1.4,1.3) -- (breg.west);
+\fill (0.55,0) circle (1pt); \draw[->] (0.55,0) |- (areg.west);
+\fill (0.3,-1.7) circle (1pt); \draw[->] (0.3,-1.7) |- (lreg.west);
+\draw[->] (lin) -- (lp);
+\draw[->, c2] (lp) -- (val);
+\draw[->] (breg.east) -- (7.3,1.3) node[right]{$b_{out}$};
+\draw[->] (res.east) -- (7.3,0.7) node[right]{\code{res}};
+\draw[->] (areg.east) -- (7.3,-0.95) node[right]{$a_{out}$};
+\draw[->] (val.east) -- (7.3,-1.7) node[right]{\code{valid}};
+\draw[->] (lreg.east) -- (7.3,-2.45) node[right]{$\mathit{last}_{out}$};
+\end{tikzpicture}}
+\caption{Processing element. Dashed registers exist only when \code{PIPE}$\,=1$. The delayed flag $\ell$ stores $\mathit{acc}+ab$ in \code{res}, pulses \code{valid} and restarts the accumulator.}
+\label{fig:pe}
+\end{figure}
+
+\subsection{Skew and the timing model}
+\label{sec:model}
+Let $t$ count cycles from the first operand at the array edge. Because row $i$ of $A$ is delayed by $i$ cycles and travels $j$ PEs to the right, and column $j$ of $B$ is delayed by $j$ cycles and travels $i$ PEs down, PE$(i,j)$ receives $A[i][k]$ and $B[k][j]$ in the same cycle, with
+\begin{equation}
+k = t - i - j, \qquad 0 \le k < K.
+\label{eq:k}
+\end{equation}
+Activity therefore sweeps the grid as a diagonal wavefront, and the bottom-right PE finishes last, at $t = 2N + K - 3$ for an $N\times N$ output tile. Including one cycle to sample \code{start} and one to clear, \code{mm\_accel} takes
+\begin{equation}
+T_{\text{acc}} = 2N + K + \mathtt{PIPE}
+\label{eq:tacc}
+\end{equation}
+cycles from \code{start} to \code{done}, against $T_{\text{seq}} = N^2K + 1$ for the single-MAC baseline. The speed-up $T_{\text{seq}}/T_{\text{acc}} = (N^2K + 1)/(2N + K)$ is therefore $N^2 U_1$ plus less than one, so it is limited by~\eqref{eq:u1}, not by the number of PEs.
+
+The controller is a four-state Moore machine. IDLE waits for \code{start}, CLEAR pulses \code{clr} for one cycle, RUN counts $t$ from 0 to $2N + K - 3 + \mathtt{PIPE}$ while the feeders drive columns and rows $t < K$ and zeros afterwards, and DONE holds the results until the next \code{start}.
+
+\subsection{Flag-driven streaming}
+\label{sec:stream}
+In \code{mm\_accel} the global clear stops the whole array between products, which is the source of the loss in~\eqref{eq:u1}. \code{mm\_stream} removes the clear. The host supplies one column of $A$ and one row of $B$ per cycle with no gap between products and raises \code{in\_last} with the final term of each. A third skew block, one bit wide, delays the flag for row $i$ by $i$ cycles, and each PE forwards it to the right with $a$. By~\eqref{eq:k} the flag therefore reaches PE$(i,j)$ in the same cycle as $A[i][K{-}1]$ and $B[K{-}1][j]$, the last pair of that product. The skew module is parameterized by lane width, so the same code builds the 8-bit operand lanes, the 1-bit flag lane and the 32-bit output lanes of the WS design.
+
+Fig.~\ref{fig:timing} shows the result, taken from the simulation waveform. PE$(0,0)$ delivers a result every $K = 4$ cycles, and PE$(3,3)$ delivers results for the same products $i + j = 6$ cycles later. For a stream of $B$ products,
+\begin{equation}
+\begin{aligned}
+T_{\text{stream}} &= BK + 2N - 2 + \mathtt{PIPE},\\
+U_{\text{stream}} &= \frac{BK}{BK + 2N - 2},
+\end{aligned}
+\label{eq:stream}
+\end{equation}
+so fill and drain are paid once per stream instead of once per product. Because the flag, not a parameter, ends each product, $K$ may differ between consecutive products.
+
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[font=\scriptsize, x=0.42cm, y=0.5cm]
+\foreach \c in {0,...,19} { \draw[gray!25] (\c,0.75) -- (\c,-2.55); }
+\foreach \c in {0,2,...,18} { \node[font=\tiny] at (\c+0.5,1.05) {\c}; }
+\node[anchor=east, font=\tiny] at (-0.2,1.05) {cycle};
+\newcommand{\wave}[3]{%
+  \node[anchor=east] at (-0.2,#1+0.22) {#2};
+  \draw (0,#1) -- (19,#1);
+  \foreach \c/\l in {#3} {
+    \fill[c1!22] (\c,#1) rectangle (\c+1,#1+0.5);
+    \draw[thick] (\c,#1) -- (\c,#1+0.5) -- (\c+1,#1+0.5) -- (\c+1,#1);
+    \node[font=\tiny] at (\c+0.5,#1+0.25) {\l};
+  }}
+\wave{0}{\code{in\_last}}{3/P1,7/P2,11/P3,15/P4}
+\wave{-1.2}{PE$(0,0)$ \code{valid}}{4/P1,8/P2,12/P3,16/P4}
+\wave{-2.4}{PE$(3,3)$ \code{valid}}{10/P1,14/P2,18/P3}
+\end{tikzpicture}}
+\caption{Streaming $4\times4\times4$ products (from the \code{stream\_tb} waveform). Each PE emits one result per product with no idle cycles; PE$(3,3)$ lags PE$(0,0)$ by $i+j=6$ cycles.}
+\label{fig:timing}
+\end{figure}
+
+\subsection{Tiling}
+\label{sec:tile}
+\code{mm\_tiled} multiplies $A \in \mathbb{Z}^{M\times K}$ by $B \in \mathbb{Z}^{K\times P}$, with $M$ and $P$ multiples of $N$, on the $N\times N$ array. A feeder walks the $T = (M/N)(P/N)$ output tiles in row-major order and streams each through \code{mm\_stream} for $K$ cycles with no gap between tiles. The difficulty is in the write-back. By~\eqref{eq:k}, PE$(i,j)$ finishes a tile $i + j$ cycles after PE$(0,0)$, so while the feeder is already on tile $\tau$, some PEs are still delivering tile $\tau{-}1$; a single shared tile index would send their results to the wrong address. Each PE therefore keeps its own tile counter (Algorithm~\ref{alg:tile}). Since PE$(N{-}1,N{-}1)$ is always the last to finish, counting its \code{valid} pulses tells the controller when all $T$ tiles are complete. The design takes
+\begin{equation}
+T_{\text{tile}} = TK + 2N + 1 + \mathtt{PIPE}
+\label{eq:tile}
+\end{equation}
+cycles. Because up to $N^2$ results can arrive in one cycle, the result buffer needs $N^2$ write ports; we return to this cost in Section~\ref{sec:area}.
+
+\begin{algorithm}[t]
+\caption{Result placement in \code{mm\_tiled}, every cycle}
+\label{alg:tile}
+\begin{algorithmic}[1]
+\For{each PE $p = (i,j)$ \textbf{in parallel}}
+  \If{$\mathit{valid}_p$}
+    \State $C[\,o_i(p)\,N + i\,][\,o_j(p)\,N + j\,] \gets \mathit{res}_p$
+    \State move $(o_i(p), o_j(p))$ to the next tile
+  \EndIf
+\EndFor
+\If{$\mathit{valid}_{(N-1,N-1)}$} $\mathit{fin} \gets \mathit{fin} + 1$ \EndIf
+\If{$\mathit{fin} = T$} raise \code{done} \EndIf
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Weight-stationary variant}
+\label{sec:ws}
+In \code{mm\_ws}, PE$(k,j)$ holds one weight $B[k][j]$, as in the TPU~\cite{jouppi2017}. For each $N\times N$ weight tile, the weights are shifted down the columns in $N$ cycles and then held. The $M$ rows of $A$ stream in from the left, row $k$ skewed by $k$ cycles, while partial sums move down each column and leave at the bottom. Column $j$'s sums leave $j$ cycles late, so a 32-bit skew block delays column $j$ by $N{-}1{-}j$ cycles to produce one complete output row per cycle. For $K > N$, the partial results of successive weight tiles are added in the result buffer. Each weight tile costs $N$ load cycles and $M + 2N - 1$ streaming cycles, so
+\begin{equation}
+T_{\text{ws}} = \frac{K}{N}\cdot\frac{P}{N}\,(M + 3N - 1) + 1.
+\label{eq:tws}
+\end{equation}
+Subtracting~\eqref{eq:tile} with $\mathtt{PIPE}=0$ gives the cycle cost of WS relative to OS,
+\begin{equation}
+T_{\text{ws}} - T_{\text{tile}} = \frac{K}{N}\cdot\frac{P}{N}\,(3N - 1) - 2N,
+\label{eq:delta}
+\end{equation}
+that is, $3N{-}1$ cycles per weight tile, independent of $M$. The weight traffic differs in the other direction: OS reads all of $B$ once per row of output tiles, $(M/N)KP$ reads, while WS reads each weight once, $KP$ reads. WS thus reduces weight reads by a factor of exactly $M/N$, and its relative cycle overhead falls as $(3N{-}1)/M$. \code{mm\_ws} has the same ports as \code{mm\_tiled}, so one testbench checks both.
+
+\subsection{Verification methodology}
+\label{sec:verif}
+A Python generator produces input matrices and NumPy reference results for any shape and writes them as two's-complement hexadecimal files that the Verilog testbenches load with \code{\$readmemh}. Every configuration runs six directed cases (identity, all zeros, all $-128$, alternating $127$ and $-128$, a single non-zero term in the corner, and a non-symmetric pattern) and 100 random cases from a fixed seed. Unit testbenches check the PE (including $-128 \times -128$, the clear, the pipeline and the flag), the skew lanes at 8 and 1 bits, the controller, and a bare 2$\times$2 array with hand-computed inputs.
+
+For the new designs, the streaming testbench checks every result of every PE as it leaves the array and that each PE produces exactly one result per product, with and without idle cycles between products. The tiled and WS testbench additionally fails if any result arrives after \code{done}. Every suite runs with \code{PIPE} set to 0 and 1. To confirm that synthesis preserves behaviour, the iCE40 netlists produced by Yosys~\cite{yosys} are simulated at gate level with the vendor cell models against the same 106 cases. A cycle-level Python model of the array confirmed~\eqref{eq:k} and a compute time of $R + C + K - 2$ cycles for an $R\times C$ array against NumPy on 200 random shapes.
+
+Passing tests show little unless the tests can fail. Following the idea of mutation analysis~\cite{demillo1978}, we injected 15 faults one at a time across the controller, skew, PE, streaming, tiled and WS logic, reran the suites, and recorded whether each fault was detected (Table~\ref{tab:mut}). GitHub Actions runs all suites, the baseline, the Python model and the neural network case study on every commit.
+
+\subsection{Experimental setup}
+Simulation uses Icarus Verilog~13.0~\cite{iverilog}. Resource counts come from Yosys~0.70~\cite{yosys} (\code{synth\_xilinx}, 7-series). Post-route timing comes from nextpnr-ice40~\cite{shah2019} on a Lattice iCE40 HX8K, a device with 7,680 logic cells and no DSP blocks. Because the array exposes $32N^2$ result bits, more than the pins of any FPGA, a wrapper \code{fpga\_top} reads one 32-bit result per cycle through a select input for place and route. Vivado does not run on our macOS hosts, so no Xilinx timing is reported. Python~3 with NumPy~2.2 and scikit-learn~1.7~\cite{pedregosa2011} generates vectors and runs the case study. No FPGA board was used.
+
+\section{Results and Discussion}
+\label{sec:results}
+
+\subsection{Correctness}
+\code{mm\_accel} and the baseline passed all 106 cases for $N \in \{2,3,4,8,16\}$ with $K = N$, and for $N = 4$ with $K = 256$, which the parameter-derived widths now allow ($NK = 1024$, against a limit of 256 before). \code{mm\_stream} passed 106 back-to-back products for $N \in \{2,3,4,8\}$, with and without idle gaps. \code{mm\_tiled} and \code{mm\_ws} passed shapes from $4\times4\times4$ to $16\times16\times16$, including the non-square $8\times16$ by $16\times12$. All suites also passed with \code{PIPE}$\,=1$, and both synthesized iCE40 netlists passed all 106 cases at gate level.
+
+Table~\ref{tab:mut} lists the injected faults. All 15 were detected. One of them, \code{done} raised one tile early, initially passed: the late results still reached the buffer before the testbench read it. Adding the rule that no result may arrive after \code{done} exposed it, which shows the value of measuring test quality rather than assuming it.
+
+\begin{table}[t]
+\centering
+\caption{Injected faults and mismatches reported by the testbenches}
+\label{tab:mut}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llr}
+\toprule
+Block & Injected fault & Mismatches \\
+\midrule
+Controller & finishes one cycle early & 25 \\
+Skew & skew removed & 288 \\
+PE & unsigned multiply & 357 \\
+PE & drops the last product & 369 \\
+PE & keeps its sum after \code{last} & 392 \\
+Stream & flag not skewed & 304 \\
+Stream & flag not forwarded right & 12 \\
+Tiled & column wrap uses the row count & 1536 \\
+Tiled & $B$ feeder uses the tile row & 1409 \\
+Tiled & \code{done} one tile early & 182 \\
+WS & weights loaded in the wrong order & 1057 \\
+WS & output deskew reversed & 1087 \\
+WS & no accumulation over $K$ tiles & 1136 \\
+WS & drain one cycle short & 208 \\
+WS & results captured one cycle early & 1073 \\
+\midrule
+\multicolumn{2}{l}{Detected} & 15 of 15 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Latency and the utilization problem}
+Table~\ref{tab:lat} lists cycles from \code{start} to \code{done} for one product. Every measurement equals~\eqref{eq:tacc}. The speed-up over the baseline grows with $K$ because fill and drain become a smaller share of the run, reaching 14.24$\times$ at $K = 64$ on the 4$\times$4 array, close to its bound of 16. For square products ($K = N$) the utilization stays at 33\% for every array size, which is the case streaming is designed to fix.
+
+\begin{table}[t]
+\centering
+\caption{One product at a time: cycles and speed-up}
+\label{tab:lat}
+\begin{tabular}{rrrrrr}
+\toprule
+$N$ & $K$ & \code{mm\_accel} & \code{seq\_mac} & Speed-up & $U_1$ \\
+\midrule
+2 & 2 & 6 & 9 & 1.50 & 33.3\% \\
+3 & 3 & 9 & 28 & 3.11 & 33.3\% \\
+4 & 4 & 12 & 65 & 5.42 & 33.3\% \\
+8 & 8 & 24 & 513 & 21.38 & 33.3\% \\
+4 & 16 & 24 & 257 & 10.71 & 66.7\% \\
+4 & 64 & 72 & 1025 & 14.24 & 88.9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Throughput with streaming}
-Table~\ref{tab:stream} compares 106 products processed one at a time (106 times the \texttt{mm\_accel} latency) with the same products streamed back to back. Streaming takes $BK + 2N - 2$ cycles for $B$ products, so the fill and drain are paid once instead of once per product. At $4\times4\times4$ the cost per product falls from 12 to 4.06 cycles (Fig.~\ref{fig:throughput}) and utilization rises from 33\% to 98.6\%. The gain is largest when $K$ is small relative to $N$, which is exactly where one-at-a-time operation wastes the most.
+Table~\ref{tab:stream} compares 106 products run one at a time with the same products streamed. Every measurement equals~\eqref{eq:stream}. At $4\times4\times4$ the cost per product falls from 12 to 4.06 cycles, a 2.96$\times$ gain, and utilization rises from 33\% to 98.6\%. Fig.~\ref{fig:util} shows both models against the measurements: one-at-a-time operation needs $K \gg 2N$ to approach full utilization, while streaming is above 98\% at every $K$ we tested. The gain is largest exactly where one-at-a-time operation wastes the most, for short products.
 
 \begin{table}[t]
 \centering
@@ -144,7 +352,7 @@ Table~\ref{tab:stream} compares 106 products processed one at a time (106 times 
 \label{tab:stream}
 \begin{tabular}{rrrrrr}
 \toprule
-$N$ & $K$ & One at a time & Stream & Gain & Util. \\
+$N$ & $K$ & One at a time & Streamed & Gain & $U_{\text{stream}}$ \\
 \midrule
 2 & 2 & 636 & 214 & 2.97 & 99.1\% \\
 4 & 4 & 1272 & 430 & 2.96 & 98.6\% \\
@@ -156,21 +364,40 @@ $N$ & $K$ & One at a time & Stream & Gain & Util. \\
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{throughput.png}
-\caption{Cycles per $4\times4\times4$ product over 106 products.}
-\label{fig:throughput}
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=5.0cm,
+  xmode=log, log basis x=2,
+  xlabel={inner dimension $K$}, ylabel={PE utilization (\%)},
+  xmin=3, xmax=80, ymin=0, ymax=105,
+  xtick={4,8,16,32,64}, xticklabels={4,8,16,32,64},
+  legend style={font=\scriptsize, at={(0.98,0.04)}, anchor=south east, draw=none, fill=white, fill opacity=0.8, text opacity=1},
+  tick label style={font=\scriptsize}, label style={font=\footnotesize},
+  grid=major, grid style={gray!20}]
+\addplot[c2, thick, domain=3:80, samples=60] {100*x/(8+x)};
+\addlegendentry{one at a time, model \eqref{eq:u1}}
+\addplot[c2, only marks, mark=o, mark size=2pt] coordinates {(4,33.3) (8,50.0) (16,66.7) (32,80.0) (64,88.9)};
+\addlegendentry{one at a time, measured}
+\addplot[c1, thick, domain=3:80, samples=60] {100*106*x/(106*x+6)};
+\addlegendentry{streaming, model \eqref{eq:stream}}
+\addplot[c1, only marks, mark=square*, mark size=1.8pt] coordinates {(4,98.6) (16,99.6)};
+\addlegendentry{streaming, measured}
+\end{axis}
+\end{tikzpicture}
+\caption{PE utilization of the 4$\times$4 array against $K$, for 106 products. The speed-up over a single MAC is about $16\times$ the utilization.}
+\label{fig:util}
 \end{figure}
 
 \subsection{Tiling}
-\texttt{mm\_tiled} takes $TK + 2N + 1$ cycles. Table~\ref{tab:tiled} compares it with a single MAC ($MKP + 1$). With 16 tiles of $16\times16\times16$ on the 4$\times$4 array, the speed-up is 15.46$\times$, 97\% of the 16$\times$ limit. For $8\times8\times8$, the tiled 4$\times$4 array takes 41 cycles; a full 8$\times$8 array takes 24 cycles with four times as many PEs, so tiling trades time for area as expected.
+Table~\ref{tab:tile} compares \code{mm\_tiled} with a single MAC ($MKP + 1$ cycles); every measurement equals~\eqref{eq:tile}. On a $16\times16\times16$ product the 4$\times$4 array reaches 15.46$\times$, 97\% of its bound, because the $2N + 1$ cycles of fill and drain are paid once for all 16 tiles. An $8\times8\times8$ product takes 41 cycles tiled on the 4$\times$4 array and 24 cycles on an 8$\times$8 array with four times as many PEs, so tiling trades time for area as expected.
 
 \begin{table}[t]
 \centering
 \caption{Tiled products against a single MAC}
-\label{tab:tiled}
+\label{tab:tile}
 \begin{tabular}{lrrrr}
 \toprule
-Product on $N{\times}N$ & Tiles & Cycles & Single MAC & Speed-up \\
+$M{\times}K{\times}P$ on $N{\times}N$ & Tiles & Cycles & Single MAC & Speed-up \\
 \midrule
 $8{\times}8{\times}8$, $N{=}4$ & 4 & 41 & 513 & 12.51 \\
 $8{\times}16{\times}12$, $N{=}4$ & 6 & 105 & 1537 & 14.64 \\
@@ -180,8 +407,9 @@ $16{\times}16{\times}16$, $N{=}8$ & 4 & 81 & 4097 & 50.58 \\
 \end{tabular}
 \end{table}
 
-\subsection{Pipelined MAC and timing}
-The results bus of \texttt{mm\_accel} is fully parallel ($32N^2$ output bits), which suits simulation but exceeds the pins of any FPGA, so a wrapper \texttt{fpga\_top} reads one 32-bit result per cycle through a select input. It was synthesized with Yosys and placed and routed with nextpnr-ice40 on a Lattice iCE40 HX8K (Table~\ref{tab:fmax}). The pipeline register raises the 4$\times$4 clock from 55.14 to 73.04\,MHz (32\%), so the peak rate rises from 0.88 to 1.17\,GMAC/s for one extra cycle of latency. It also reduces area: without the register, Yosys merges the multiplier and the 32-bit adder into one multiply-accumulate cell that maps to a large LUT adder tree on the HX8K, which has no DSP blocks; with the register, the adder uses the iCE40 carry chain. On Xilinx 7-series the register costs nothing, because Yosys places it inside the DSP48E1 as its internal multiply register (Table~\ref{tab:synth}). Xilinx post-route timing was not measured, because Vivado does not run on macOS.
+\subsection{Clock frequency and area}
+\label{sec:area}
+Table~\ref{tab:fmax} gives post-route results on the iCE40. The pipeline register raises the 4$\times$4 clock from 55.14 to 73.04\,MHz (32\%), so the peak rate rises from 0.88 to 1.17\,GMAC/s at the cost of one extra cycle of latency. Less expected, it also cuts the logic cells from 6,942 to 4,679. Without the register, Yosys merges each multiplier and its 32-bit adder into a single multiply-accumulate cell, which the HX8K, lacking DSP blocks, must build as a large LUT adder tree. With the register in between, the adder is mapped separately onto the dedicated carry chain. The 2$\times$2 design shows the same effect.
 
 \begin{table}[t]
 \centering
@@ -189,60 +417,88 @@ The results bus of \texttt{mm\_accel} is fully parallel ($32N^2$ output bits), w
 \label{tab:fmax}
 \begin{tabular}{lrrr}
 \toprule
-\texttt{fpga\_top} & Logic cells & Utilization & fmax (MHz) \\
+\code{fpga\_top} & Logic cells & Utilization & $f_{\max}$ (MHz) \\
 \midrule
-$N{=}2$ & 1688 & 21\% & 62.08 \\
-$N{=}2$, pipelined & 1142 & 14\% & 89.34 \\
-$N{=}4$ & 6942 & 90\% & 55.14 \\
-$N{=}4$, pipelined & 4679 & 60\% & 73.04 \\
+$N{=}2$ & 1,688 & 21\% & 62.08 \\
+$N{=}2$, pipelined & 1,142 & 14\% & 89.34 \\
+$N{=}4$ & 6,942 & 90\% & 55.14 \\
+$N{=}4$, pipelined & 4,679 & 60\% & 73.04 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Resources}
-Table~\ref{tab:synth} gives Yosys 0.70 synthesis results for a Xilinx 7-series target. Each PE maps to one DSP48E1 and the input buffers to distributed RAM. \texttt{mm\_stream} adds a 32-bit result register per PE. The tiled design is dominated by its result buffer: all 16 PEs can finish in the same cycle, so the buffer needs 16 write ports and is built from flip-flops and wide multiplexers. The WS design writes one row of $N$ results per cycle, so its buffer needs only 4 write ports and uses less than half the LUTs.
+Table~\ref{tab:synth} gives Xilinx 7-series resources from Yosys. Each PE maps to one DSP48E1 and the input buffers to distributed RAM. The pipelined PE has the same resource counts as the original, because the register is absorbed into the DSP48E1 as its internal multiplier register. The tiled design is dominated by its result buffer: since all 16 PEs can deliver a result in the same cycle, the buffer needs 16 write ports and is built from flip-flops and wide multiplexers, which account for most of the design's 6,000 LUTs. The WS design writes one row of $N$ results per cycle, so its buffer needs only four ports and uses 57\% fewer LUTs. The single-MAC baseline is larger than the 4$\times$4 array in LUTs because it keeps all 16 results in flip-flops with their write logic, while the array keeps them in the DSP accumulators.
 
 \begin{table}[t]
 \centering
-\caption{Yosys synthesis results (Xilinx 7-series)}
+\caption{Synthesis results, Xilinx 7-series (Yosys 0.70)}
 \label{tab:synth}
 \begin{tabular}{lrrrr}
 \toprule
-Design & DSP & LUTs & RAM & FFs \\
+Design & DSP & LUT & LUTRAM & FF \\
 \midrule
-\texttt{mm\_accel} $2\times2$ & 4 & 62 & 0 & 89 \\
-\texttt{mm\_accel} $4\times4$ & 16 & 70 & 16 & 172 \\
-\texttt{mm\_accel} $4\times4$, pipelined & 16 & 70 & 16 & 172 \\
-\texttt{mm\_accel} $8\times8$ & 64 & 134 & 48 & 1102 \\
-\texttt{mm\_stream} $4\times4$ & 16 & 7 & 0 & 679 \\
-\texttt{mm\_tiled} $4\times4$, $8^3$ & 16 & 6000 & 24 & 2839 \\
-\texttt{mm\_ws} $4\times4$, $8^3$ & 16 & 2601 & 24 & 2395 \\
-\texttt{seq\_mac}, $N{=}K{=}4$ & 1 & 603 & 4 & 562 \\
+\code{mm\_accel} $2{\times}2$ & 4 & 62 & 0 & 89 \\
+\code{mm\_accel} $4{\times}4$ & 16 & 70 & 16 & 172 \\
+\code{mm\_accel} $4{\times}4$, pipelined & 16 & 70 & 16 & 172 \\
+\code{mm\_accel} $8{\times}8$ & 64 & 134 & 48 & 1102 \\
+\code{mm\_stream} $4{\times}4$ & 16 & 7 & 0 & 679 \\
+\code{mm\_tiled} $4{\times}4$, $8^3$ & 16 & 6000 & 24 & 2839 \\
+\code{mm\_ws} $4{\times}4$, $8^3$ & 16 & 2601 & 24 & 2395 \\
+\code{seq\_mac}, $N{=}K{=}4$ & 1 & 603 & 4 & 562 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Output-stationary against weight-stationary}
-Table~\ref{tab:osws} runs both designs on the same 4$\times$4 array and vectors. OS reads every element of $B$ again for each of the $M/N$ rows of output tiles, while WS loads each weight once. On the first layer of the digit classifier ($360\times64$ by $64\times32$), WS makes 2,048 weight reads against 184,320, a 90$\times$ reduction in buffer traffic, for 3\% more cycles. WS loses on small products because each weight tile costs $N$ load cycles and $2N{-}1$ drain cycles; double-buffered weights, as in the TPU, would hide the load.
+\label{sec:osws}
+Table~\ref{tab:osws} runs both dataflows on the same 4$\times$4 array and the same vectors. The cycle counts equal~\eqref{eq:tile} and~\eqref{eq:tws}, and the weight reads equal $(M/N)KP$ and $KP$. Fig.~\ref{fig:delta} plots the extra WS cycles against the number of weight tiles: all four workloads fall on the line of~\eqref{eq:delta}, $11$ cycles per tile minus 8.
+
+The two dataflows trade cycles for traffic. On small products WS is slower, 77 against 41 cycles for $8\times8\times8$, because each weight tile pays its load and drain while serving only eight rows of $A$. On the first layer of the classifier in Section~\ref{sec:nn} ($M = 360$) the cycle overhead falls to 3\%, while weight reads drop from 184,320 to 2,048, a factor of $M/N = 90$. For tall matrices, therefore, WS is the better choice whenever buffer bandwidth or energy matters, which is consistent with its use in the TPU~\cite{jouppi2017}. Double-buffering the weights, which the TPU does and our design does not, would hide the $N$ load cycles and leave only the drain.
 
 \begin{table}[t]
 \centering
 \caption{Output-stationary (OS) against weight-stationary (WS), $N{=}4$}
 \label{tab:osws}
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{lrrrr}
 \toprule
-Product & OS cyc. & WS cyc. & OS $B$ reads & WS $B$ reads \\
+$M{\times}K{\times}P$ & OS cycles & WS cycles & OS $B$ reads & WS $B$ reads \\
 \midrule
 $4{\times}4{\times}4$ & 13 & 16 & 16 & 16 \\
 $8{\times}8{\times}8$ & 41 & 77 & 128 & 64 \\
-$64{\times}16{\times}16$ & 1033 & 1201 & 4096 & 256 \\
-$360{\times}64{\times}32$ & 46089 & 47489 & 184320 & 2048 \\
+$64{\times}16{\times}16$ & 1,033 & 1,201 & 4,096 & 256 \\
+$360{\times}64{\times}32$ & 46,089 & 47,489 & 184,320 & 2,048 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Neural network demo}
-A 64-32-10 multilayer perceptron with ReLU was trained in floating point with scikit-learn~\cite{pedregosa2011} on its 8$\times$8 handwritten digits dataset and quantized as in~\cite{jacob2018}: pixels and weights to int8 with one symmetric scale per tensor, biases to int32. Both matrix multiplications of all 360 test images ran on the tiled accelerator; bias, ReLU and rescaling to int8 between the layers ran in Python, the role of the TPU's activation unit. Table~\ref{tab:nn} shows the result. The accelerator outputs match the int8 NumPy reference exactly on both the OS and WS designs, and quantization costs one image of accuracy. The first layer takes 46,089 cycles, 16.0$\times$ fewer than a single MAC, because tiling keeps all 16 PEs busy.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=\columnwidth, height=4.6cm,
+  xmode=log, ymode=log,
+  xlabel={weight tiles $(K/N)(P/N)$}, ylabel={$T_{\text{ws}} - T_{\text{tile}}$ (cycles)},
+  xmin=0.7, xmax=200, ymin=1.5, ymax=3000,
+  legend style={font=\scriptsize, at={(0.03,0.97)}, anchor=north west, draw=none},
+  tick label style={font=\scriptsize}, label style={font=\footnotesize},
+  grid=major, grid style={gray!20}]
+\addplot[c3, thick, domain=0.8:180, samples=80] {11*x-8};
+\addlegendentry{model \eqref{eq:delta}: $11\,x - 8$}
+\addplot[c2, only marks, mark=*, mark size=2pt]
+  coordinates {(1,3) (4,36) (16,168) (128,1400)};
+\addlegendentry{measured}
+\end{axis}
+\end{tikzpicture}
+\caption{Extra cycles of WS over OS on the 4$\times$4 array for the four workloads of Table~\ref{tab:osws} (left to right). Each weight tile costs $3N - 1 = 11$ cycles; OS pays $2N = 8$ once.}
+\label{fig:delta}
+\end{figure}
+
+\subsection{Case study: digit classification}
+\label{sec:nn}
+To test the design on a real workload, a 64-32-10 multilayer perceptron with ReLU was trained in floating point with scikit-learn~\cite{pedregosa2011} on its 8$\times$8 handwritten digit images~\cite{alpaydin1998} (1,437 training and 360 test images). It was quantized following~\cite{jacob2018}: pixels to $[0,127]$, weights to int8 with one symmetric scale per layer, and biases to int32. Both matrix multiplications for all 360 test images ran on \code{mm\_tiled} in simulation; bias, ReLU and rescaling between layers ran on the host, the role of the TPU's activation unit. The second layer's 10 outputs were padded to 12 so that $P$ is a multiple of $N$.
+
+Table~\ref{tab:nn} gives the results. The accelerator output equals the int8 NumPy reference exactly, on both the OS and WS designs, and quantization costs one test image (348 against 349 correct). The first layer performs 737,280 MACs in 46,089 cycles, a PE utilization of 99.98\%, so the 4$\times$4 array is 16.0$\times$ faster than a single MAC on this layer.
 
 \begin{table}[t]
 \centering
@@ -250,40 +506,53 @@ A 64-32-10 multilayer perceptron with ReLU was trained in floating point with sc
 \label{tab:nn}
 \begin{tabular}{lr}
 \toprule
-Accuracy, float model & 96.94\% \\
+Accuracy, floating point & 96.94\% \\
 Accuracy, int8 on the accelerator & 96.67\% \\
-Layer 1, $360{\times}64$ by $64{\times}32$: cycles & 46,089 \\
-Layer 1 on a single MAC: cycles & 737,280 \\
-Layer 2, $360{\times}32$ by $32{\times}12$: cycles & 8,649 \\
-Match with NumPy (OS and WS) & exact \\
+Layer 1 ($360{\times}64$ by $64{\times}32$), OS cycles & 46,089 \\
+Layer 1, single MAC & 737,280 \\
+Layer 1, WS cycles & 47,489 \\
+Layer 2 ($360{\times}32$ by $32{\times}12$), OS cycles & 8,649 \\
+Output equal to NumPy (OS and WS) & yes \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Limitations}
-No FPGA board was used, so all results come from simulation, synthesis and place-and-route. Clock frequency was measured on the iCE40 for the \texttt{mm\_accel} wrapper only, not for the streaming, tiled or WS top levels, and Xilinx timing was not measured. The tiled result buffer is expensive, and the WS design does not double-buffer its weights. Bias and activation run on the host rather than in hardware.
+All results come from simulation, synthesis and place-and-route; the design has not run on an FPGA board. Clock frequency was measured only for the \code{mm\_accel} wrapper on the iCE40, not for the streaming, tiled or WS top levels, and no Xilinx timing is reported. The 16-port result buffer of \code{mm\_tiled} is expensive; an output FIFO or a drain network through the array would reduce it. The WS design does not double-buffer its weights, and bias and activation run on the host rather than in hardware.
 
 \section{Individual Contributions}
 \begin{itemize}
-\item \textbf{Vetriselvan R} (array core): processing element and parameterized $N\times N$ systolic array, pipelined MAC, \texttt{last} flag and result path in the PE and array, weight-stationary PE, array and top level, PE testbench, continuous integration and design documentation.
-\item \textbf{Hrishi Dongre} (input timing and control): skew delay lines with configurable lane width, controller FSM, top-level \texttt{mm\_accel}, parameter-derived widths, streaming top level \texttt{mm\_stream} and tiled top level \texttt{mm\_tiled}, skew and controller testbenches.
-\item \textbf{Ishan Goyal} (verification): NumPy test-vector generator for any shape, bare-array, accelerator, streaming and tiled testbenches, gate-level netlist simulation, mutation tests, Makefile test flow, waveform plotting, and the neural network demo.
-\item \textbf{Pampana Sree Adithya} (baseline and performance): sequential MAC baseline, cycle-level timing model, performance sweeps for one-at-a-time, streaming, tiled and WS designs, Yosys synthesis, FPGA wrapper and iCE40 place-and-route timing with and without the pipeline.
-\item \textbf{Vedant Madne} (documentation): block, PE and wavefront diagrams, this report, repository README and demo video.
+\item \textbf{Vetriselvan R} (array core): processing element and parameterized $N\times N$ array; pipelined MAC; \code{last} flag and result path in the PE and array; weight-stationary PE, array and top level; PE testbench; continuous integration; design documentation.
+\item \textbf{Hrishi Dongre} (input timing and control): skew delay lines with configurable lane width; controller; \code{mm\_accel}; parameter-derived widths; streaming top level \code{mm\_stream}; tiled top level \code{mm\_tiled}; skew and controller testbenches.
+\item \textbf{Ishan Goyal} (verification): test-vector generator for any shape; array, accelerator, streaming and tiled testbenches; gate-level netlist simulation; fault-injection tests; Makefile test flow; neural network case study.
+\item \textbf{Pampana Sree Adithya} (baseline and performance): single-MAC baseline; cycle-level Python model; performance sweeps for one-at-a-time, streaming, tiled and WS designs; Yosys synthesis; FPGA wrapper; iCE40 place-and-route with and without the pipeline.
+\item \textbf{Vedant Madne} (documentation): diagrams, this report, repository README and the Phase I video.
 \end{itemize}
 
 \section{Conclusion}
-The project delivers a verified, parameterized 4$\times$4 systolic array for int8 matrix multiplication and measures it against a sequential baseline. Phase I showed a 5.4$\times$ speed-up on one $4\times4\times4$ product, but only 33\% PE utilization. Phase II closed that gap: a one-bit flag travelling with the data lets each PE start the next product on its own, raising utilization to 98.6\%; tiling extends the array to matrices of any size at up to 97\% of its peak; and a pipeline register raises the iCE40 clock by 32\%. Building a weight-stationary variant showed the trade-off measured rather than assumed: similar throughput on tall matrices, 90$\times$ fewer weight reads, but a fixed cost per weight tile. A quantized digit classifier running exactly on the array shows that the design does useful neural network work. Future work includes double-buffered weights for the WS design, a drain network or output FIFO in place of the tiled result buffer, bias and activation in hardware, and timing on a Xilinx device or a real board.
+\label{sec:concl}
+A small systolic array loses most of its cycles to filling and draining: our 4$\times$4 output-stationary array, computing one $4\times4\times4$ product at a time, keeps its PEs busy for one cycle in three. Moving the end-of-product decision from a global clear into a one-bit flag that travels with the data removes that loss, raising utilization to 98.6\% without adding control outside the array. Per-PE tile counters extend the same mechanism to matrices of any multiple of the array size, at up to 97\% of the peak rate, and a pipeline register raises the iCE40 clock by 32\% while reducing area. The closed-form models for output-stationary and weight-stationary operation match every RTL measurement and make the trade-off explicit: weight-stationary costs $3N{-}1$ cycles per weight tile and saves a factor of $M/N$ in weight reads, so it suits tall matrices. A quantized digit classifier running bit-exact on the array at 99.98\% utilization shows the design doing useful work. Natural next steps are double-buffered weights, an output drain network to replace the 16-port result buffer, bias and activation in hardware, and measurement on an FPGA board.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{99}
+\bibitem{kunglei1978} H.~T. Kung and C.~E. Leiserson, ``Systolic arrays (for VLSI),'' in \emph{Sparse Matrix Proceedings 1978}, I.~S. Duff and G.~W. Stewart, Eds. Philadelphia, PA, USA: SIAM, 1979, pp.~256--282.
 \bibitem{kung1982} H.~T. Kung, ``Why systolic architectures?'' \emph{Computer}, vol.~15, no.~1, pp.~37--46, Jan. 1982.
-\bibitem{jouppi2017} N.~P. Jouppi \emph{et al.}, ``In-datacenter performance analysis of a tensor processing unit,'' in \emph{Proc. 44th Int. Symp. Computer Architecture (ISCA)}, 2017.
-\bibitem{chen2016} Y.-H. Chen, J. Emer, and V. Sze, ``Eyeriss: A spatial architecture for energy-efficient dataflow for convolutional neural networks,'' in \emph{Proc. 43rd Int. Symp. Computer Architecture (ISCA)}, 2016.
+\bibitem{jouppi2017} N.~P. Jouppi \emph{et al.}, ``In-datacenter performance analysis of a tensor processing unit,'' in \emph{Proc. 44th Annu. Int. Symp. Computer Architecture (ISCA)}, 2017, pp.~1--12.
+\bibitem{chen2016} Y.-H. Chen, J. Emer, and V. Sze, ``Eyeriss: A spatial architecture for energy-efficient dataflow for convolutional neural networks,'' in \emph{Proc. 43rd Annu. Int. Symp. Computer Architecture (ISCA)}, 2016, pp.~367--379.
+\bibitem{chen2017} Y.-H. Chen, T. Krishna, J.~S. Emer, and V. Sze, ``Eyeriss: An energy-efficient reconfigurable accelerator for deep convolutional neural networks,'' \emph{IEEE J. Solid-State Circuits}, vol.~52, no.~1, pp.~127--138, Jan. 2017.
 \bibitem{sze2017} V. Sze, Y.-H. Chen, T.-J. Yang, and J.~S. Emer, ``Efficient processing of deep neural networks: A tutorial and survey,'' \emph{Proc. IEEE}, vol.~105, no.~12, pp.~2295--2329, Dec. 2017.
-\bibitem{samajdar2018} A. Samajdar \emph{et al.}, ``SCALE-Sim: Systolic CNN accelerator simulator,'' arXiv:1811.02883, 2018.
-\bibitem{genc2021} H. Genc \emph{et al.}, ``Gemmini: Enabling systematic deep-learning architecture evaluation via full-stack integration,'' in \emph{Proc. 58th Design Automation Conf. (DAC)}, 2021, pp.~769--774.
+\bibitem{kwon2019} H. Kwon, P. Chatarasi, M. Pellauer, A. Parashar, V. Sarkar, and T. Krishna, ``Understanding reuse, performance, and hardware cost of DNN dataflows: A data-centric approach,'' in \emph{Proc. 52nd IEEE/ACM Int. Symp. Microarchitecture (MICRO)}, 2019, pp.~754--768.
+\bibitem{parashar2019} A. Parashar \emph{et al.}, ``Timeloop: A systematic approach to DNN accelerator evaluation,'' in \emph{Proc. IEEE Int. Symp. Performance Analysis of Systems and Software (ISPASS)}, 2019, pp.~304--315.
+\bibitem{samajdar2018} A. Samajdar, Y. Zhu, P. Whatmough, M. Mattina, and T. Krishna, ``SCALE-Sim: Systolic CNN accelerator simulator,'' arXiv:1811.02883, 2018.
+\bibitem{samajdar2020} A. Samajdar, J.~M. Joseph, Y. Zhu, P. Whatmough, M. Mattina, and T. Krishna, ``A systematic methodology for characterizing scalability of DNN accelerators using SCALE-Sim,'' in \emph{Proc. IEEE Int. Symp. Performance Analysis of Systems and Software (ISPASS)}, 2020, pp.~58--68.
+\bibitem{genc2021} H. Genc \emph{et al.}, ``Gemmini: Enabling systematic deep-learning architecture evaluation via full-stack integration,'' in \emph{Proc. 58th ACM/IEEE Design Automation Conf. (DAC)}, 2021, pp.~769--774.
+\bibitem{zhang2015} C. Zhang, P. Li, G. Sun, Y. Guan, B. Xiao, and J. Cong, ``Optimizing FPGA-based accelerator design for deep convolutional neural networks,'' in \emph{Proc. ACM/SIGDA Int. Symp. Field-Programmable Gate Arrays (FPGA)}, 2015, pp.~161--170.
 \bibitem{jacob2018} B. Jacob \emph{et al.}, ``Quantization and training of neural networks for efficient integer-arithmetic-only inference,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2018, pp.~2704--2713.
+\bibitem{demillo1978} R.~A. DeMillo, R.~J. Lipton, and F.~G. Sayward, ``Hints on test data selection: Help for the practicing programmer,'' \emph{Computer}, vol.~11, no.~4, pp.~34--41, Apr. 1978.
+\bibitem{shah2019} D. Shah \emph{et al.}, ``Yosys+nextpnr: An open source framework from Verilog to bitstream for commercial FPGAs,'' in \emph{Proc. IEEE 27th Annu. Int. Symp. Field-Programmable Custom Computing Machines (FCCM)}, 2019, pp.~1--4.
+\bibitem{yosys} C. Wolf, ``Yosys Open SYnthesis Suite.'' [Online]. Available: \url{https://yosyshq.net/yosys/}
+\bibitem{iverilog} S. Williams, ``Icarus Verilog.'' [Online]. Available: \url{https://steveicarus.github.io/iverilog/}
 \bibitem{pedregosa2011} F. Pedregosa \emph{et al.}, ``Scikit-learn: Machine learning in Python,'' \emph{J. Mach. Learn. Res.}, vol.~12, pp.~2825--2830, 2011.
+\bibitem{alpaydin1998} E. Alpaydin and C. Kaynak, ``Optical recognition of handwritten digits,'' UCI Machine Learning Repository, 1998.
 \end{thebibliography}
 
 \end{document}
